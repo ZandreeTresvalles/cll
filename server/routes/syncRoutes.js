@@ -1,7 +1,7 @@
 // ============================================
 // SYNC ROUTES - API endpoints for data sync
 // File: src/server/routes/syncRoutes.js
-// Manual sync only - no cron job
+// UPDATED: Removed user_id filtering - all users see all data
 // ============================================
 
 import express from 'express';
@@ -144,39 +144,36 @@ router.post('/campaign-metrics', async (req, res) => {
 // SYNC STATUS & LOGS
 // ============================================
 
-// Get sync status
+// Get sync status (global - not per user)
 router.get('/status', async (req, res) => {
   try {
-    // Get sync settings
+    // Get sync settings (get the most recent one)
     const { data: settings } = await supabaseAdmin
       .from('sync_settings')
       .select('*')
-      .eq('user_id', req.user.id)
+      .order('last_sync_at', { ascending: false })
+      .limit(1)
       .single();
     
-    // Get recent sync logs
+    // Get recent sync logs (all users)
     const { data: logs } = await supabaseAdmin
       .from('sync_logs')
       .select('*')
-      .eq('user_id', req.user.id)
       .order('started_at', { ascending: false })
       .limit(10);
     
-    // Get data counts
+    // Get data counts (global - no user filter)
     const { count: ordersCount } = await supabaseAdmin
       .from('cached_orders')
-      .select('*', { count: 'exact', head: true })
-      .eq('user_id', req.user.id);
+      .select('*', { count: 'exact', head: true });
     
     const { count: campaignsCount } = await supabaseAdmin
       .from('cached_campaigns')
-      .select('*', { count: 'exact', head: true })
-      .eq('user_id', req.user.id);
+      .select('*', { count: 'exact', head: true });
     
     const { count: metricsCount } = await supabaseAdmin
       .from('cached_campaign_metrics')
-      .select('*', { count: 'exact', head: true })
-      .eq('user_id', req.user.id);
+      .select('*', { count: 'exact', head: true });
     
     res.json({
       success: true,
@@ -203,7 +200,7 @@ router.get('/status', async (req, res) => {
 });
 
 // ============================================
-// CACHED DATA ENDPOINTS
+// CACHED DATA ENDPOINTS (NO user_id filtering)
 // ============================================
 
 // Get cached orders
@@ -224,7 +221,7 @@ router.get('/data/orders', async (req, res) => {
         *,
         lazada_accounts!inner(account_name, seller_id, country)
       `, { count: 'exact' })
-      .eq('user_id', req.user.id)
+      // Removed: .eq('user_id', req.user.id) - all users see all orders
       .order('order_created_at', { ascending: false });
     
     if (accountId && accountId !== 'all') {
@@ -285,7 +282,7 @@ router.get('/data/campaign-metrics', async (req, res) => {
         *,
         lazada_accounts!inner(account_name, seller_id, country)
       `)
-      .eq('user_id', req.user.id)
+      // Removed: .eq('user_id', req.user.id) - all users see all metrics
       .order('metric_date', { ascending: false });
     
     if (accountId && accountId !== 'all') {
@@ -332,7 +329,7 @@ router.get('/data/campaigns', async (req, res) => {
         *,
         lazada_accounts!inner(account_name, seller_id, country)
       `)
-      .eq('user_id', req.user.id)
+      // Removed: .eq('user_id', req.user.id) - all users see all campaigns
       .order('campaign_name');
     
     if (accountId && accountId !== 'all') {

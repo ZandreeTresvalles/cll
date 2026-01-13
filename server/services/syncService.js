@@ -1,6 +1,7 @@
 // ============================================
 // SYNC SERVICE - Fetches Lazada data and saves to Supabase
 // File: src/server/services/syncService.js
+// UPDATED: All users can sync all accounts (no user_id filtering)
 // ============================================
 
 import { supabaseAdmin } from '../utils/supabase.js';
@@ -17,15 +18,16 @@ const lazadaAuth = new LazadaAuth(
 // HELPER FUNCTIONS
 // ============================================
 
-// Get all active Lazada accounts for a user (or all users if no userId)
-async function getLazadaAccounts(userId = null) {
+// Get all active Lazada accounts (NO user filter - all users see all accounts)
+async function getLazadaAccounts(accountId = null) {
   let query = supabaseAdmin
     .from('lazada_accounts')
     .select('*')
     .eq('is_active', true);
   
-  if (userId) {
-    query = query.eq('user_id', userId);
+  // Only filter by specific account if requested
+  if (accountId) {
+    query = query.eq('id', accountId);
   }
   
   const { data, error } = await query;
@@ -97,21 +99,19 @@ async function updateSyncLog(logId, updates) {
 export async function syncOrders(userId, accountId = null, options = {}) {
   const { daysBack = 30 } = options;
   
-  console.log(`📦 Starting orders sync for user ${userId}`);
+  console.log(`📦 Starting orders sync`);
   
-  const accounts = await getLazadaAccounts(userId);
-  const targetAccounts = accountId 
-    ? accounts.filter(a => a.id === accountId)
-    : accounts;
+  // Get ALL accounts (or specific account if accountId provided)
+  const accounts = await getLazadaAccounts(accountId);
   
-  if (targetAccounts.length === 0) {
+  if (accounts.length === 0) {
     throw new Error('No accounts found to sync');
   }
   
   let totalSynced = 0;
   const results = [];
   
-  for (const account of targetAccounts) {
+  for (const account of accounts) {
     const syncLog = await createSyncLog(userId, account.id, 'orders', { daysBack });
     
     try {
@@ -158,10 +158,9 @@ export async function syncOrders(userId, accountId = null, options = {}) {
       
       console.log(`  Found ${allOrders.length} orders for ${account.account_name || account.seller_id}`);
       
-      // Upsert orders to Supabase
+      // Upsert orders to Supabase (NO user_id - shared across all users)
       if (allOrders.length > 0) {
         const ordersToUpsert = allOrders.map(order => ({
-          user_id: userId,
           account_id: account.id,
           order_id: order.order_id?.toString(),
           order_number: order.order_number,
@@ -231,17 +230,15 @@ export async function syncOrders(userId, accountId = null, options = {}) {
 // SYNC CAMPAIGNS
 // ============================================
 export async function syncCampaigns(userId, accountId = null) {
-  console.log(`📊 Starting campaigns sync for user ${userId}`);
+  console.log(`📊 Starting campaigns sync`);
   
-  const accounts = await getLazadaAccounts(userId);
-  const targetAccounts = accountId 
-    ? accounts.filter(a => a.id === accountId)
-    : accounts;
+  // Get ALL accounts (or specific account if accountId provided)
+  const accounts = await getLazadaAccounts(accountId);
   
   let totalSynced = 0;
   const results = [];
   
-  for (const account of targetAccounts) {
+  for (const account of accounts) {
     const syncLog = await createSyncLog(userId, account.id, 'campaigns');
     
     try {
@@ -257,13 +254,10 @@ export async function syncCampaigns(userId, accountId = null) {
       );
       
       if (response.code === '0' || response.code === 0) {
-        const campaigns = response.result?.campaigns || [];
-        
-        console.log(`  Found ${campaigns.length} campaigns for ${account.account_name || account.seller_id}`);
+        const campaigns = response.result?.campaignList || [];
         
         if (campaigns.length > 0) {
           const campaignsToUpsert = campaigns.map(campaign => ({
-            user_id: userId,
             account_id: account.id,
             campaign_id: campaign.campaignId?.toString(),
             campaign_name: campaign.campaignName,
@@ -333,12 +327,10 @@ export async function syncCampaigns(userId, accountId = null) {
 export async function syncCampaignMetrics(userId, accountId = null, options = {}) {
   const { daysBack = 7 } = options;
   
-  console.log(`📈 Starting campaign metrics sync for user ${userId}`);
+  console.log(`📈 Starting campaign metrics sync`);
   
-  const accounts = await getLazadaAccounts(userId);
-  const targetAccounts = accountId 
-    ? accounts.filter(a => a.id === accountId)
-    : accounts;
+  // Get ALL accounts (or specific account if accountId provided)
+  const accounts = await getLazadaAccounts(accountId);
   
   let totalSynced = 0;
   const results = [];
@@ -351,7 +343,7 @@ export async function syncCampaignMetrics(userId, accountId = null, options = {}
     dateList.push(date.toISOString().split('T')[0]);
   }
   
-  for (const account of targetAccounts) {
+  for (const account of accounts) {
     const syncLog = await createSyncLog(userId, account.id, 'campaign_metrics', { daysBack });
     let accountSynced = 0;
     
@@ -378,7 +370,6 @@ export async function syncCampaignMetrics(userId, accountId = null, options = {}
           
           if (campaigns.length > 0) {
             const metricsToUpsert = campaigns.map(campaign => ({
-              user_id: userId,
               account_id: account.id,
               campaign_id: campaign.campaignId?.toString(),
               campaign_name: campaign.campaignName,
@@ -467,7 +458,7 @@ export async function syncCampaignMetrics(userId, accountId = null, options = {}
 export async function syncAllData(userId, options = {}) {
   const { ordersDaysBack = 30, metricsDaysBack = 7 } = options;
   
-  console.log(`🔄 Starting full sync for user ${userId}`);
+  console.log(`🔄 Starting full sync`);
   const startTime = Date.now();
   
   const results = {
@@ -488,11 +479,11 @@ export async function syncAllData(userId, options = {}) {
     // Sync campaign metrics
     results.campaign_metrics = await syncCampaignMetrics(userId, null, { daysBack: metricsDaysBack });
     
-    // Update sync settings
+    // Update sync settings (use fixed ID for global settings)
     await supabaseAdmin
       .from('sync_settings')
       .upsert({
-        user_id: userId,
+        user_id: userId, // Keep track of who triggered sync
         last_sync_at: new Date().toISOString(),
         last_sync_status: 'completed',
         updated_at: new Date().toISOString()
@@ -502,15 +493,6 @@ export async function syncAllData(userId, options = {}) {
     console.error('❌ Full sync failed:', error);
     results.status = 'failed';
     results.error = error.message;
-    
-    await supabaseAdmin
-      .from('sync_settings')
-      .upsert({
-        user_id: userId,
-        last_sync_at: new Date().toISOString(),
-        last_sync_status: 'failed',
-        updated_at: new Date().toISOString()
-      }, { onConflict: 'user_id' });
   }
   
   results.duration_ms = Date.now() - startTime;
