@@ -5,13 +5,11 @@ import { Calendar, Download, RefreshCw, Info, Database } from 'lucide-react';
 import { useAccounts } from '../utils/AccountManager';
 import { auth } from '../lib/supabase';
 import { SyncService, CachedDataService, getFormattedLastSync } from '../utils/CachedDataService';
-import { useAuth } from '../App';
 import DataCharts from '../components/DataCharts';
 
 export default function DataInsights({ apiUrl }) {
   const navigate = useNavigate();
   const { accounts, loading: accountsLoading, refresh: refreshAccounts } = useAccounts();
-  const { hasPageAccess, roleLoading } = useAuth();
   
   const [activeTab, setActiveTab] = useState('overview');
   const [metricsData, setMetricsData] = useState([]);

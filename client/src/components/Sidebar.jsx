@@ -13,7 +13,7 @@ import { useAuth } from "../App";
 export default function Sidebar() {
     const [isCollapsed, setIsCollapsed] = useState(false);
     const location = useLocation();
-    const { role, hasPageAccess, isAdmin, loading, roleLoading } = useAuth();
+    const { role, hasPageAccess, isAdmin, loading } = useAuth();
 
     // All menu items with their required page access
     const allMenuItems = [
@@ -39,7 +39,7 @@ export default function Sidebar() {
         }
     };
 
-    if (loading || roleLoading) {
+    if (loading) {
         return (
             <div className={`flex flex-col bg-white shadow h-screen w-64`}>
                 <div className="flex items-center justify-center h-full">

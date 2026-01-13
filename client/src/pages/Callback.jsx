@@ -1,9 +1,10 @@
 // pages/Callback.jsx
 // Updated to save Lazada account to database via authenticated API
+// Does NOT depend on role loading - handles auth internally
 
 import { useEffect, useState } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
-import { auth } from '../lib/supabase';
+import { auth, supabase } from '../lib/supabase';
 import { AccountManager } from '../utils/AccountManager';
 
 function Callback({ apiUrl }) {
@@ -11,8 +12,12 @@ function Callback({ apiUrl }) {
   const navigate = useNavigate();
   const [status, setStatus] = useState('Processing authentication...');
   const [error, setError] = useState(null);
+  const [processed, setProcessed] = useState(false);
 
   useEffect(() => {
+    // Prevent double processing
+    if (processed) return;
+    
     console.log('=== CALLBACK PAGE LOADED ===');
     console.log('Current URL:', window.location.href);
     
@@ -34,15 +39,18 @@ function Callback({ apiUrl }) {
     }
 
     console.log('Authorization code received:', code);
+    setProcessed(true);
     exchangeToken(code);
-  }, [searchParams, navigate]);
+  }, [searchParams, navigate, processed]);
 
   const exchangeToken = async (code) => {
     try {
       setStatus('Verifying your session...');
       
       // Get the user's access token for API authentication
-      const token = await auth.getAccessToken();
+      // Use supabase directly instead of auth helper to ensure we get fresh token
+      const { data: { session } } = await supabase.auth.getSession();
+      const token = session?.access_token;
       
       if (!token) {
         setError('You must be logged in to connect a Lazada account');
@@ -50,6 +58,7 @@ function Callback({ apiUrl }) {
         return;
       }
 
+      console.log('User authenticated, exchanging code...');
       setStatus('Exchanging authorization code...');
       console.log('Calling API:', `${apiUrl}/lazada/token`);
       
@@ -57,7 +66,7 @@ function Callback({ apiUrl }) {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
-          'Authorization': `Bearer ${token}`, // User auth token
+          'Authorization': `Bearer ${token}`,
         },
         body: JSON.stringify({ code })
       });
@@ -70,19 +79,34 @@ function Callback({ apiUrl }) {
         
         // The backend has already saved the account to the database
         // Just refresh the local cache
-        await AccountManager.refreshAfterAdd();
+        try {
+          await AccountManager.refreshAfterAdd();
 
-        // Set this as the active account if we have an account ID
-        if (data.account?.id) {
-          await AccountManager.setActiveAccount(data.account.id);
+          // Set this as the active account if we have an account ID
+          if (data.account?.id) {
+            await AccountManager.setActiveAccount(data.account.id);
+          }
+        } catch (cacheError) {
+          console.warn('Cache refresh failed, continuing anyway:', cacheError);
         }
 
         console.log('Account saved! Redirecting to orders...');
         setStatus('Redirecting to your orders...');
 
+        // Force redirect after short delay
         setTimeout(() => {
+          console.log('Navigating to /orders...');
           navigate('/orders', { replace: true });
-        }, 1000);
+        }, 1500);
+        
+        // Fallback: if navigate doesn't work, use window.location
+        setTimeout(() => {
+          if (window.location.pathname.includes('callback')) {
+            console.log('Fallback redirect...');
+            window.location.href = '/cll/orders';
+          }
+        }, 3000);
+        
       } else {
         console.error('Token exchange failed:', data);
         setError(`Authentication failed: ${data.error || data.details || 'Unknown error'}`);

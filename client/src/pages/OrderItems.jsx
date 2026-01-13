@@ -4,12 +4,10 @@ import * as XLSX from 'xlsx';
 import { useAccounts } from '../utils/AccountManager.jsx';
 import { auth } from '../lib/supabase';
 import { SyncService, CachedDataService, getFormattedLastSync } from '../utils/CachedDataService';
-import { useRole } from '../context/RoleContext.jsx';
 
 function OrderItems({ apiUrl }) {
   const navigate = useNavigate();
   const { accounts, activeAccount, loading: accountsLoading, refresh: refreshAccounts } = useAccounts();
-  const { hasPageAccess, loading: roleLoading } = useRole();
   
   const [orders, setOrders] = useState([]);
   const [filteredOrders, setFilteredOrders] = useState([]);

@@ -33,7 +33,7 @@ const ROLES = [
 
 export default function UserCreation() {
   const navigate = useNavigate();
-  const { isAdmin, roleLoading } = useAuth();
+  const { isAdmin, userProfile } = useAuth();
 
   const [users, setUsers] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -56,17 +56,15 @@ export default function UserCreation() {
 
   // Redirect non-admins
   useEffect(() => {
-    if (!roleLoading && !isAdmin) {
+    if (!isAdmin && userProfile) {
       navigate('/orders', { replace: true });
     }
-  }, [roleLoading, isAdmin, navigate]);
+  }, [isAdmin, userProfile, navigate]);
 
   // Fetch users
   useEffect(() => {
-    if (isAdmin) {
-      fetchUsers();
-    }
-  }, [isAdmin]);
+    fetchUsers();
+  }, []);
 
   const fetchUsers = async () => {
     setLoading(true);
@@ -76,10 +74,17 @@ export default function UserCreation() {
         .select('*')
         .order('created_at', { ascending: false });
 
-      if (error) throw error;
-      setUsers(data || []);
+      if (error) {
+        console.error('Error fetching users:', error);
+        setError('Failed to fetch users: ' + error.message);
+        setUsers([]);
+      } else {
+        setUsers(data || []);
+      }
     } catch (err) {
+      console.error('Exception fetching users:', err);
       setError('Failed to fetch users: ' + err.message);
+      setUsers([]);
     } finally {
       setLoading(false);
     }
@@ -122,63 +127,44 @@ export default function UserCreation() {
     setCreating(true);
 
     try {
-      // Create user in Supabase Auth
-      const { data: authData, error: authError } = await supabase.auth.admin.createUser({
+      // Use regular signup (NOT admin API)
+      const { data: signupData, error: signupError } = await supabase.auth.signUp({
         email: formData.email,
         password: formData.password,
-        email_confirm: true, // Auto-confirm for admin-created users
-        user_metadata: {
-          full_name: formData.fullName,
-          role: formData.role,
+        options: {
+          data: {
+            full_name: formData.fullName,
+            role: formData.role,
+          },
         },
       });
 
-      if (authError) {
-        // If admin API not available, use regular signup
-        if (authError.message.includes('not authorized')) {
-          // Fallback: Use regular signup (user will need to verify email)
-          const { data: signupData, error: signupError } = await supabase.auth.signUp({
+      if (signupError) {
+        throw signupError;
+      }
+
+      // If user was created, add their profile
+      if (signupData.user) {
+        const { error: profileError } = await supabase
+          .from('user_profiles')
+          .upsert({
+            id: signupData.user.id,
             email: formData.email,
-            password: formData.password,
-            options: {
-              data: {
-                full_name: formData.fullName,
-                role: formData.role,
-              },
-            },
+            full_name: formData.fullName,
+            role: formData.role,
           });
 
-          if (signupError) throw signupError;
+        if (profileError) {
+          console.warn('Profile creation error:', profileError);
+          // Profile might be created by trigger, continue anyway
+        }
 
-          // Update the profile with the correct role
-          if (signupData.user) {
-            await supabase
-              .from('user_profiles')
-              .upsert({
-                id: signupData.user.id,
-                email: formData.email,
-                full_name: formData.fullName,
-                role: formData.role,
-              });
-          }
-
+        // Check if email confirmation is required
+        if (signupData.user && !signupData.session) {
           setSuccess(`User created! A verification email has been sent to ${formData.email}`);
         } else {
-          throw authError;
+          setSuccess(`User ${formData.email} created successfully!`);
         }
-      } else {
-        // Admin API worked, update profile
-        if (authData.user) {
-          await supabase
-            .from('user_profiles')
-            .upsert({
-              id: authData.user.id,
-              email: formData.email,
-              full_name: formData.fullName,
-              role: formData.role,
-            });
-        }
-        setSuccess(`User ${formData.email} created successfully!`);
       }
 
       // Reset form
@@ -264,18 +250,6 @@ export default function UserCreation() {
       default: return 'bg-gray-100 text-gray-800';
     }
   };
-
-  if (roleLoading) {
-    return (
-      <div className="flex items-center justify-center min-h-screen">
-        <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-blue-600"></div>
-      </div>
-    );
-  }
-
-  if (!isAdmin) {
-    return null;
-  }
 
   return (
     <div className="max-w-6xl mx-auto p-6">
