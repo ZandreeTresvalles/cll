@@ -74,52 +74,49 @@ function AuthProvider({ children }) {
   const [lazadaAccounts, setLazadaAccounts] = useState([]);
   const [accountsLoading, setAccountsLoading] = useState(false);
   
-  // Role state - default to admin to prevent blocking
+  // Role state
   const [userProfile, setUserProfile] = useState(null);
-  const [roleLoading, setRoleLoading] = useState(false); // Changed to false - don't block
+  const [roleLoading, setRoleLoading] = useState(true); // Track role loading separately
 
-  // Fetch user profile with role (non-blocking with timeout)
+  // Fetch user profile with role
   const fetchUserProfile = useCallback(async (userId) => {
     if (!userId) {
       setUserProfile(null);
+      setRoleLoading(false);
       return;
     }
 
+    setRoleLoading(true);
     try {
-      // Add timeout to prevent hanging
-      const timeoutPromise = new Promise((_, reject) => 
-        setTimeout(() => reject(new Error('Timeout')), 5000)
-      );
-
-      const fetchPromise = supabase
+      const { data: profile, error } = await supabase
         .from('user_profiles')
         .select('*')
         .eq('id', userId)
         .single();
 
-      const { data: profile, error } = await Promise.race([fetchPromise, timeoutPromise]);
-
       if (error) {
         console.warn('Error fetching profile:', error.message);
-        // If no profile exists or error, assume admin for now (will be created later)
-        if (error.code === 'PGRST116' || error.message === 'Timeout') {
-          // Try to create profile
+        
+        // If no profile exists, try to create one with default role
+        if (error.code === 'PGRST116') {
           try {
             const { data: { user } } = await supabase.auth.getUser();
             if (user) {
-              const { data: newProfile } = await supabase
+              const { data: newProfile, error: createError } = await supabase
                 .from('user_profiles')
                 .insert({
                   id: user.id,
                   email: user.email,
                   full_name: user.user_metadata?.full_name || user.email.split('@')[0],
-                  role: 'admin', // Default to admin for first user
+                  role: 'warehouse', // Default to warehouse for new users
                 })
                 .select()
                 .single();
 
-              if (newProfile) {
+              if (!createError && newProfile) {
+                console.log('Created new profile with role:', newProfile.role);
                 setUserProfile(newProfile);
+                setRoleLoading(false);
                 return;
               }
             }
@@ -127,15 +124,21 @@ function AuthProvider({ children }) {
             console.warn('Could not create profile:', createError);
           }
         }
-        // Default to admin role if we can't fetch profile
-        setUserProfile({ role: 'admin' });
+        
+        // If we still don't have a profile, create a temporary one with default role
+        // This prevents infinite loops when profile can't be loaded
+        console.warn('Setting default warehouse profile');
+        setUserProfile({ role: 'warehouse', id: userId });
       } else {
+        console.log('Profile loaded with role:', profile.role);
         setUserProfile(profile);
       }
     } catch (err) {
       console.error('Error in fetchUserProfile:', err);
-      // Default to admin role on error so app doesn't get stuck
-      setUserProfile({ role: 'admin' });
+      // Set default profile to prevent infinite loops
+      setUserProfile({ role: 'warehouse', id: userId });
+    } finally {
+      setRoleLoading(false);
     }
   }, []);
 
@@ -167,11 +170,15 @@ function AuthProvider({ children }) {
         setUser(session?.user || null);
         
         if (session?.user) {
-          // Fetch profile in background (don't block)
-          fetchUserProfile(session.user.id);
+          // Wait for profile to load
+          await fetchUserProfile(session.user.id);
+        } else {
+          // No user, no profile to load
+          setRoleLoading(false);
         }
       } catch (error) {
         console.error('Error getting session:', error);
+        setRoleLoading(false);
       } finally {
         setLoading(false);
       }
@@ -183,17 +190,24 @@ function AuthProvider({ children }) {
     const { data: { subscription } } = supabase.auth.onAuthStateChange(
       async (event, session) => {
         console.log('Auth state changed:', event);
-        setSession(session);
-        setUser(session?.user || null);
-
+        
         if (event === 'SIGNED_IN' && session?.user) {
-          // Fetch profile in background (don't block)
-          fetchUserProfile(session.user.id);
+          // Set roleLoading FIRST to prevent route guards from redirecting
+          setRoleLoading(true);
+          setSession(session);
+          setUser(session.user);
+          // Then load profile
+          await fetchUserProfile(session.user.id);
         } else if (event === 'SIGNED_OUT') {
+          setSession(null);
+          setUser(null);
+          setUserProfile(null);
+          setRoleLoading(false);
           // Clear account data on sign out
           await AccountManager.clearAll();
           setLazadaAccounts([]);
-          setUserProfile(null);
+        } else if (event === 'INITIAL_SESSION') {
+          // Already handled in getInitialSession
         }
       }
     );
@@ -213,31 +227,36 @@ function AuthProvider({ children }) {
     await auth.signOut();
   };
 
-  // Role helper functions - default to admin if no profile yet
-  const role = userProfile?.role || 'admin';
-  const permissions = ROLE_PERMISSIONS[role] || ROLE_PERMISSIONS.admin;
+  // Role helper functions - default to null until profile loads
+  const role = userProfile?.role || null;
+  const permissions = role ? ROLE_PERMISSIONS[role] : null;
 
   const hasPageAccess = useCallback((pageName) => {
-    // Default to allowing access if permissions not loaded
-    if (!permissions) return true;
+    // If role not loaded yet, deny access (will wait for roleLoading)
+    if (!role || !permissions) return false;
     return permissions.pages.includes(pageName);
-  }, [permissions]);
+  }, [role, permissions]);
 
   const hasPermission = useCallback((permissionName) => {
-    // Default to allowing if permissions not loaded
-    if (!permissions) return true;
+    // If role not loaded yet, deny sensitive permissions
+    if (!role || !permissions) return false;
     return permissions[permissionName] === true;
-  }, [permissions]);
+  }, [role, permissions]);
 
+  // Only consider admin if role is explicitly 'admin'
   const isAdmin = role === 'admin';
   const isWarehouse = role === 'warehouse';
   const isMarketing = role === 'marketing';
 
+  // Get correct default path based on role
   const getDefaultPath = useCallback(() => {
-    if (!permissions || permissions.pages.length === 0) return '/orders';
-    const firstPage = permissions.pages[0];
-    return `/${firstPage}`;
-  }, [permissions]);
+    // Return specific paths based on role
+    if (role === 'admin') return '/dashboard';
+    if (role === 'warehouse') return '/orders';
+    if (role === 'marketing') return '/data_insights';
+    // Default while loading - will be corrected once role loads
+    return '/orders';
+  }, [role]);
 
   const value = {
     // Auth
@@ -286,7 +305,7 @@ function Layout({ children }) {
   const authPages = ['/', '/login', '/callback', '/lazada-auth'];
   const isAuthPage = authPages.includes(location.pathname) || location.pathname.startsWith('/callback');
 
-  // Show loading state
+  // Show loading state only for initial auth check
   if (loading) {
     return (
       <div className="min-h-screen flex items-center justify-center bg-gray-50">
@@ -322,90 +341,81 @@ function Layout({ children }) {
 }
 
 // ============================================
-// ROUTE GUARDS (Simplified - no role blocking)
+// ROUTE GUARDS (Fixed - no infinite loops)
 // ============================================
 
-// Protected Route Component
+// Loading spinner component
+function LoadingSpinner() {
+  return (
+    <div className="min-h-screen flex items-center justify-center">
+      <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-blue-600"></div>
+    </div>
+  );
+}
+
+// Protected Route Component (basic auth check)
 function ProtectedRoute({ children }) {
   const { isAuthenticated, loading } = useAuth();
   const location = useLocation();
 
-  if (loading) {
-    return (
-      <div className="min-h-screen flex items-center justify-center">
-        <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-blue-600"></div>
-      </div>
-    );
-  }
-
-  if (!isAuthenticated) {
-    return <Navigate to="/login" state={{ from: location }} replace />;
-  }
-
+  if (loading) return <LoadingSpinner />;
+  if (!isAuthenticated) return <Navigate to="/login" state={{ from: location }} replace />;
   return children;
 }
 
-// Protected Route that also requires Lazada account (NO role blocking)
+// Protected Route that checks role access
 function ProtectedRouteWithLazada({ children, requiredPage }) {
-  const { 
-    isAuthenticated, 
-    loading, 
-    hasLazadaAccounts, 
-    accountsLoading,
-    hasPageAccess,
-    getDefaultPath,
-    isAdmin,
-    role
-  } = useAuth();
+  const { isAuthenticated, loading, roleLoading, role, userProfile } = useAuth();
   const location = useLocation();
 
-  // Only wait for auth and accounts loading - NOT role
-  if (loading || accountsLoading) {
-    return (
-      <div className="min-h-screen flex items-center justify-center">
-        <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-blue-600"></div>
-      </div>
-    );
-  }
+  // Wait for auth
+  if (loading) return <LoadingSpinner />;
+  
+  // Not authenticated - go to login
+  if (!isAuthenticated) return <Navigate to="/login" state={{ from: location }} replace />;
+  
+  // Wait for role to load - MUST have userProfile before proceeding
+  if (roleLoading || !userProfile) return <LoadingSpinner />;
 
-  if (!isAuthenticated) {
-    return <Navigate to="/login" state={{ from: location }} replace />;
-  }
+  // Now we have the role - check access
+  const permissions = ROLE_PERMISSIONS[role];
+  const hasAccess = permissions?.pages?.includes(requiredPage);
 
-  // Check role-based access (non-blocking - defaults to allow)
-  if (requiredPage && role && !hasPageAccess(requiredPage)) {
-    return <Navigate to={getDefaultPath()} replace />;
-  }
-
-  // If no Lazada accounts and user is admin, redirect to connect one
-  if (!hasLazadaAccounts && isAdmin && location.pathname !== '/lazada-auth') {
-    return <Navigate to="/lazada-auth" state={{ from: location }} replace />;
+  // If no access to this page, redirect to their default page
+  if (requiredPage && !hasAccess) {
+    const defaultPage = role === 'admin' ? '/dashboard' : 
+                        role === 'warehouse' ? '/orders' : 
+                        role === 'marketing' ? '/data_insights' : '/orders';
+    
+    // Prevent redirect loop - if we're already on the default page, just show content
+    if (location.pathname === defaultPage) {
+      return children;
+    }
+    return <Navigate to={defaultPage} replace />;
   }
 
   return children;
 }
 
-// Admin-only Route (non-blocking)
+// Admin-only Route
 function AdminRoute({ children }) {
-  const { isAuthenticated, loading, isAdmin, getDefaultPath } = useAuth();
+  const { isAuthenticated, loading, roleLoading, role, userProfile } = useAuth();
   const location = useLocation();
 
-  // Only wait for auth loading - NOT role
-  if (loading) {
-    return (
-      <div className="min-h-screen flex items-center justify-center">
-        <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-blue-600"></div>
-      </div>
-    );
-  }
+  // Wait for auth
+  if (loading) return <LoadingSpinner />;
+  
+  // Not authenticated - go to login
+  if (!isAuthenticated) return <Navigate to="/login" state={{ from: location }} replace />;
+  
+  // Wait for role to load - MUST have userProfile before proceeding
+  if (roleLoading || !userProfile) return <LoadingSpinner />;
 
-  if (!isAuthenticated) {
-    return <Navigate to="/login" state={{ from: location }} replace />;
-  }
-
-  // Default to allowing admin access (role defaults to admin)
-  if (!isAdmin) {
-    return <Navigate to={getDefaultPath()} replace />;
+  // Redirect non-admins to their default page
+  if (role !== 'admin') {
+    const defaultPage = role === 'warehouse' ? '/orders' : 
+                        role === 'marketing' ? '/data_insights' : '/orders';
+    return <Navigate to={defaultPage} replace />;
   }
 
   return children;
@@ -413,27 +423,23 @@ function AdminRoute({ children }) {
 
 // Public Route - redirect to appropriate page if already logged in
 function PublicRoute({ children }) {
-  const { isAuthenticated, loading, hasLazadaAccounts, accountsLoading, getDefaultPath, isAdmin } = useAuth();
+  const { isAuthenticated, loading, roleLoading, role, userProfile } = useAuth();
 
-  // Only wait for auth and accounts loading - NOT role
-  if (loading || accountsLoading) {
-    return (
-      <div className="min-h-screen flex items-center justify-center">
-        <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-blue-600"></div>
-      </div>
-    );
-  }
+  // Wait for auth check
+  if (loading) return <LoadingSpinner />;
 
-  if (isAuthenticated) {
-    // If logged in but no Lazada accounts and is admin, go to connect page
-    if (!hasLazadaAccounts && isAdmin) {
-      return <Navigate to="/lazada-auth" replace />;
-    }
-    // Otherwise go to default page based on role
-    return <Navigate to={getDefaultPath()} replace />;
-  }
+  // Not authenticated - show login page
+  if (!isAuthenticated) return children;
 
-  return children;
+  // Authenticated - wait for role to load before redirecting
+  if (roleLoading || !userProfile) return <LoadingSpinner />;
+
+  // Now redirect based on role
+  const defaultPage = role === 'admin' ? '/dashboard' : 
+                      role === 'warehouse' ? '/orders' : 
+                      role === 'marketing' ? '/data_insights' : '/orders';
+  
+  return <Navigate to={defaultPage} replace />;
 }
 
 // ============================================
@@ -540,8 +546,8 @@ function AppRoutes() {
           }
         />
 
-        {/* 404 Redirect */}
-        <Route path="*" element={<Navigate to="/orders" replace />} />
+        {/* 404 Redirect - redirect to login, PublicRoute will redirect to correct page */}
+        <Route path="*" element={<Navigate to="/login" replace />} />
       </Routes>
     </Layout>
   );

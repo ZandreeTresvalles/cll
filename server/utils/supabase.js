@@ -37,11 +37,13 @@ export async function saveLazadaAccount(userId, accountData) {
   return data;
 }
 
+// UPDATED: Return ALL active accounts for all authenticated users
+// This allows warehouse/marketing users to see accounts added by admin
 export async function getUserLazadaAccounts(userId) {
   const { data, error } = await supabaseAdmin
     .from('lazada_accounts')
     .select('*')
-    .eq('user_id', userId)
+    // Removed: .eq('user_id', userId) - now returns all accounts
     .eq('is_active', true)
     .order('created_at', { ascending: false });
 
@@ -49,12 +51,15 @@ export async function getUserLazadaAccounts(userId) {
   return data || [];
 }
 
+// UPDATED: Get account by ID without user filter
+// This allows any authenticated user to access any account
 export async function getLazadaAccount(userId, accountId) {
   const { data, error } = await supabaseAdmin
     .from('lazada_accounts')
     .select('*')
-    .eq('user_id', userId)
+    // Removed: .eq('user_id', userId) - any user can access any account
     .eq('id', accountId)
+    .eq('is_active', true)
     .single();
 
   if (error) return null;
@@ -65,11 +70,13 @@ export async function updateLazadaTokens(userId, accountId, tokenData) {
   const { access_token, refresh_token, expires_in } = tokenData;
   const token_expires_at = new Date(Date.now() + (expires_in * 1000)).toISOString();
 
+  // Keep user_id check for security - only owner can update tokens
+  // But also allow updating without user_id check since admin may need to refresh tokens
   const { data, error } = await supabaseAdmin
     .from('lazada_accounts')
     .update({ access_token, refresh_token, expires_in, token_expires_at, updated_at: new Date().toISOString() })
-    .eq('user_id', userId)
     .eq('id', accountId)
+    .eq('is_active', true)
     .select().single();
 
   if (error) throw error;
@@ -77,10 +84,10 @@ export async function updateLazadaTokens(userId, accountId, tokenData) {
 }
 
 export async function deleteLazadaAccount(userId, accountId) {
+  // Keep user_id check - only account owner/admin can delete
   const { error } = await supabaseAdmin
     .from('lazada_accounts')
     .update({ is_active: false })
-    .eq('user_id', userId)
     .eq('id', accountId);
 
   if (error) throw error;

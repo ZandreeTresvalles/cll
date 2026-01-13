@@ -6,10 +6,12 @@ import { useAccounts } from '../utils/AccountManager';
 import { auth } from '../lib/supabase';
 import { SyncService, CachedDataService, getFormattedLastSync } from '../utils/CachedDataService';
 import DataCharts from '../components/DataCharts';
+import { useAuth } from '../App';
 
 export default function DataInsights({ apiUrl }) {
   const navigate = useNavigate();
   const { accounts, loading: accountsLoading, refresh: refreshAccounts } = useAccounts();
+  const { isAdmin } = useAuth(); // Get admin status for conditional rendering
   
   const [activeTab, setActiveTab] = useState('overview');
   const [metricsData, setMetricsData] = useState([]);
@@ -206,10 +208,8 @@ export default function DataInsights({ apiUrl }) {
     }
     if (accountsLoading) return;
     
-    if (accounts.length === 0) {
-      navigate('/lazada-auth', { replace: true });
-      return;
-    }
+    // Don't redirect to lazada-auth - just fetch cached data
+    // Admin users can add accounts from Settings page if needed
 
     // Only fetch once on initial load
     if (!initialFetchDone.current) {

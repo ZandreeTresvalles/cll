@@ -2,31 +2,21 @@
 // User authentication page using Supabase Auth
 // Only @cloudlogiclimited.com emails are allowed
 
-import { useState, useEffect } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useState } from 'react';
 import { auth } from '../lib/supabase';
 
 const ALLOWED_DOMAIN = '@cloudlogiclimited.com';
 
 function Login() {
-  const navigate = useNavigate();
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
   const [message, setMessage] = useState('');
-  const [mode, setMode] = useState('login'); // 'login', 'signup', 'magic'
+  const [mode, setMode] = useState('login'); // 'login', 'magic'
 
-  // Check if already logged in
-  useEffect(() => {
-    const checkSession = async () => {
-      const { session } = await auth.getSession();
-      if (session) {
-        navigate('/orders', { replace: true });
-      }
-    };
-    checkSession();
-  }, [navigate]);
+  // NOTE: We don't check session or redirect here
+  // App.jsx PublicRoute handles redirecting authenticated users to their correct page based on role
 
   // Validate email domain
   const validateEmail = (email) => {
@@ -57,44 +47,10 @@ function Login() {
         return;
       }
 
+      // Don't navigate here - let App.jsx handle redirect based on role
+      // The auth state change will trigger PublicRoute to redirect to correct page
       if (data.session) {
-        navigate('/orders', { replace: true });
-      }
-    } catch (err) {
-      setError(err.message);
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  const handleSignUp = async (e) => {
-    e.preventDefault();
-    setLoading(true);
-    setError('');
-    setMessage('');
-
-    // Validate email domain
-    const emailError = validateEmail(email);
-    if (emailError) {
-      setError(emailError);
-      setLoading(false);
-      return;
-    }
-
-    try {
-      const { data, error } = await auth.signUp(email, password);
-
-      if (error) {
-        setError(error.message);
-        return;
-      }
-
-      // Check if email confirmation is required
-      if (data.user && !data.session) {
-        setMessage('Check your email for the confirmation link!');
-        setMode('login');
-      } else if (data.session) {
-        navigate('/orders', { replace: true });
+        console.log('Login successful, App.jsx will handle redirect');
       }
     } catch (err) {
       setError(err.message);
@@ -179,7 +135,6 @@ function Login() {
           <h1 className="text-2xl font-bold text-gray-900">CLL Sellercenter</h1>
           <p className="text-gray-500 mt-1">
             {mode === 'login' && 'Sign in to your account'}
-            {mode === 'signup' && 'Create a new account'}
             {mode === 'magic' && 'Sign in with magic link'}
           </p>
         </div>
@@ -262,48 +217,6 @@ function Login() {
               ) : (
                 'Sign In'
               )}
-            </button>
-          </form>
-        )}
-
-        {/* Sign Up Form */}
-        {mode === 'signup' && (
-          <form onSubmit={handleSignUp} className="space-y-4">
-            <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1">
-                Email
-              </label>
-              <input
-                type="email"
-                value={email}
-                onChange={(e) => setEmail(e.target.value)}
-                className="w-full px-4 py-3 rounded-lg border border-gray-300 focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-all"
-                placeholder={`user${ALLOWED_DOMAIN}`}
-                required
-              />
-            </div>
-
-            <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1">
-                Password
-              </label>
-              <input
-                type="password"
-                value={password}
-                onChange={(e) => setPassword(e.target.value)}
-                className="w-full px-4 py-3 rounded-lg border border-gray-300 focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-all"
-                placeholder="Minimum 6 characters"
-                minLength={6}
-                required
-              />
-            </div>
-
-            <button
-              type="submit"
-              disabled={loading}
-              className="w-full py-3 px-4 bg-gradient-to-r from-green-600 to-emerald-600 text-white font-semibold rounded-lg hover:from-green-700 hover:to-emerald-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-green-500 transition-all disabled:opacity-50 disabled:cursor-not-allowed"
-            >
-              {loading ? 'Creating account...' : 'Create Account'}
             </button>
           </form>
         )}

@@ -13,7 +13,7 @@ import { useAuth } from "../App";
 export default function Sidebar() {
     const [isCollapsed, setIsCollapsed] = useState(false);
     const location = useLocation();
-    const { role, hasPageAccess, isAdmin, loading } = useAuth();
+    const { role, hasPageAccess, isAdmin } = useAuth();
 
     // All menu items with their required page access
     const allMenuItems = [
@@ -38,16 +38,6 @@ export default function Sidebar() {
             default: return 'bg-gray-100 text-gray-700';
         }
     };
-
-    if (loading) {
-        return (
-            <div className={`flex flex-col bg-white shadow h-screen w-64`}>
-                <div className="flex items-center justify-center h-full">
-                    <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-blue-600"></div>
-                </div>
-            </div>
-        );
-    }
 
     return (
         <div className={`flex flex-col bg-white shadow h-screen transition-all duration-300 ${isCollapsed ? "w-20" : "w-64"}`}>

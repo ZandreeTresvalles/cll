@@ -4,10 +4,12 @@ import * as XLSX from 'xlsx';
 import { useAccounts } from '../utils/AccountManager.jsx';
 import { auth } from '../lib/supabase';
 import { SyncService, CachedDataService, getFormattedLastSync } from '../utils/CachedDataService';
+import { useAuth } from '../App';
 
 function OrderItems({ apiUrl }) {
   const navigate = useNavigate();
   const { accounts, activeAccount, loading: accountsLoading, refresh: refreshAccounts } = useAccounts();
+  const { isAdmin } = useAuth(); // Get admin status for conditional rendering
   
   const [orders, setOrders] = useState([]);
   const [filteredOrders, setFilteredOrders] = useState([]);
@@ -113,10 +115,8 @@ function OrderItems({ apiUrl }) {
     }
     if (accountsLoading) return;
     
-    if (accounts.length === 0) {
-      navigate('/lazada-auth', { replace: true });
-      return;
-    }
+    // Don't redirect to lazada-auth - just fetch cached data
+    // Admin users can add accounts from the page itself if needed
 
     // Only fetch once on initial load
     if (!initialFetchDone.current) {
@@ -505,12 +505,18 @@ function OrderItems({ apiUrl }) {
               ))}
             </div>
             {accounts.length === 0 && (
-              <button
-                onClick={() => navigate('/lazada-auth')}
-                className="mt-2 text-blue-600 hover:text-blue-700 text-sm font-medium"
-              >
-                + Connect Lazada Account
-              </button>
+              isAdmin ? (
+                <button
+                  onClick={() => navigate('/lazada-auth')}
+                  className="mt-2 text-blue-600 hover:text-blue-700 text-sm font-medium"
+                >
+                  + Connect Lazada Account
+                </button>
+              ) : (
+                <p className="mt-2 text-gray-500 text-sm">
+                  No accounts connected. Contact an admin to connect accounts.
+                </p>
+              )
             )}
           </div>
           <div className="text-right">
@@ -529,15 +535,18 @@ function OrderItems({ apiUrl }) {
           </p>
         </div>
         <div className="flex flex-wrap gap-2">
-          <button
-            onClick={() => navigate('/lazada-auth')}
-            className="bg-indigo-600 text-white px-4 py-2 rounded-lg hover:bg-indigo-700 transition flex items-center gap-2"
-          >
-            <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 6v6m0 0v6m0-6h6m-6 0H6" />
-            </svg>
-            Add Account
-          </button>
+          {/* Add Account button - only show for admin users */}
+          {isAdmin && (
+            <button
+              onClick={() => navigate('/lazada-auth')}
+              className="bg-indigo-600 text-white px-4 py-2 rounded-lg hover:bg-indigo-700 transition flex items-center gap-2"
+            >
+              <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 6v6m0 0v6m0-6h6m-6 0H6" />
+              </svg>
+              Add Account
+            </button>
+          )}
           <button
             onClick={exportCurrentPageToExcel}
             disabled={paginatedOrders.length === 0}
