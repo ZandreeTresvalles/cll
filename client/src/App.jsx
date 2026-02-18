@@ -3,7 +3,7 @@
 // Fixed: Role loading no longer blocks the app
 
 import { BrowserRouter, Routes, Route, useLocation, Navigate } from "react-router-dom";
-import { useState, useEffect, createContext, useContext, useCallback } from "react";
+import { useState, useEffect, createContext, useContext, useCallback, useRef } from "react";
 import { auth, supabase } from "./lib/supabase";
 import { AccountManager } from "./utils/AccountManager";
 
@@ -22,6 +22,7 @@ import UserCreation from "./pages/UserCreation";
 // Components
 import Sidebar from "./components/Sidebar";
 import { TopNav } from "./components/TopNav";
+import { NotificationProvider } from "./utils/NotificationContext";
 
 const API_URL = import.meta.env.VITE_API_URL || '/api';
 
@@ -68,25 +69,49 @@ export function useAuth() {
 
 // Auth Provider Component
 function AuthProvider({ children }) {
+  // Initialize from localStorage cache for instant load on refresh
+  const cachedProfile = localStorage.getItem('userProfile');
+  const initialProfile = cachedProfile ? JSON.parse(cachedProfile) : null;
+  
   const [user, setUser] = useState(null);
   const [session, setSession] = useState(null);
-  const [loading, setLoading] = useState(true);
+  // If we have cached profile, don't show loading - verify in background
+  const [loading, setLoading] = useState(!initialProfile);
   const [lazadaAccounts, setLazadaAccounts] = useState([]);
   const [accountsLoading, setAccountsLoading] = useState(false);
   
-  // Role state
-  const [userProfile, setUserProfile] = useState(null);
-  const [roleLoading, setRoleLoading] = useState(true); // Track role loading separately
+  // Role state - initialize from cache if available
+  const [userProfile, setUserProfile] = useState(initialProfile);
+  const [roleLoading, setRoleLoading] = useState(!initialProfile); // Don't show loading if we have cached profile
+  
+  // Ref to track if profile has been loaded (persists across re-renders)
+  const profileLoadedRef = useRef(!!initialProfile);
+  
+  // Helper to update profile and cache it
+  const updateUserProfile = useCallback((profile) => {
+    setUserProfile(profile);
+    if (profile) {
+      localStorage.setItem('userProfile', JSON.stringify(profile));
+      profileLoadedRef.current = true;
+    } else {
+      localStorage.removeItem('userProfile');
+      profileLoadedRef.current = false;
+    }
+  }, []);
 
   // Fetch user profile with role
   const fetchUserProfile = useCallback(async (userId) => {
     if (!userId) {
-      setUserProfile(null);
+      updateUserProfile(null);
       setRoleLoading(false);
       return;
     }
 
-    setRoleLoading(true);
+    // Only show loading if we don't have a cached profile
+    if (!profileLoadedRef.current) {
+      setRoleLoading(true);
+    }
+    
     try {
       const { data: profile, error } = await supabase
         .from('user_profiles')
@@ -115,7 +140,7 @@ function AuthProvider({ children }) {
 
               if (!createError && newProfile) {
                 console.log('Created new profile with role:', newProfile.role);
-                setUserProfile(newProfile);
+                updateUserProfile(newProfile);
                 setRoleLoading(false);
                 return;
               }
@@ -126,21 +151,20 @@ function AuthProvider({ children }) {
         }
         
         // If we still don't have a profile, create a temporary one with default role
-        // This prevents infinite loops when profile can't be loaded
         console.warn('Setting default warehouse profile');
-        setUserProfile({ role: 'warehouse', id: userId });
+        updateUserProfile({ role: 'warehouse', id: userId });
       } else {
         console.log('Profile loaded with role:', profile.role);
-        setUserProfile(profile);
+        updateUserProfile(profile);
       }
     } catch (err) {
       console.error('Error in fetchUserProfile:', err);
       // Set default profile to prevent infinite loops
-      setUserProfile({ role: 'warehouse', id: userId });
+      updateUserProfile({ role: 'warehouse', id: userId });
     } finally {
       setRoleLoading(false);
     }
-  }, []);
+  }, [updateUserProfile]);
 
   // Fetch Lazada accounts when user is authenticated
   const fetchLazadaAccounts = async () => {
@@ -170,14 +194,17 @@ function AuthProvider({ children }) {
         setUser(session?.user || null);
         
         if (session?.user) {
-          // Wait for profile to load
+          // Valid session - fetch/verify profile in background
           await fetchUserProfile(session.user.id);
         } else {
-          // No user, no profile to load
+          // No valid session - clear any cached profile
+          updateUserProfile(null);
           setRoleLoading(false);
         }
       } catch (error) {
         console.error('Error getting session:', error);
+        // Clear cached data on error
+        updateUserProfile(null);
         setRoleLoading(false);
       } finally {
         setLoading(false);
@@ -192,16 +219,27 @@ function AuthProvider({ children }) {
         console.log('Auth state changed:', event);
         
         if (event === 'SIGNED_IN' && session?.user) {
-          // Set roleLoading FIRST to prevent route guards from redirecting
-          setRoleLoading(true);
+          // Only load profile if we haven't loaded one yet
+          // This prevents showing loading spinner on token refresh or tab switch
+          if (!profileLoadedRef.current) {
+            setRoleLoading(true);
+            setSession(session);
+            setUser(session.user);
+            await fetchUserProfile(session.user.id);
+          } else {
+            // Profile already loaded - just update session/user silently
+            setSession(session);
+            setUser(session.user);
+          }
+        } else if (event === 'TOKEN_REFRESHED' && session?.user) {
+          // Token was refreshed - just update session, don't reload anything
           setSession(session);
           setUser(session.user);
-          // Then load profile
-          await fetchUserProfile(session.user.id);
+          // Don't change roleLoading or userProfile
         } else if (event === 'SIGNED_OUT') {
           setSession(null);
           setUser(null);
-          setUserProfile(null);
+          updateUserProfile(null); // This also clears localStorage
           setRoleLoading(false);
           // Clear account data on sign out
           await AccountManager.clearAll();
@@ -213,7 +251,7 @@ function AuthProvider({ children }) {
     );
 
     return () => subscription.unsubscribe();
-  }, [fetchUserProfile]);
+  }, [fetchUserProfile, updateUserProfile]);
 
   // Fetch Lazada accounts when session changes
   useEffect(() => {
@@ -264,7 +302,8 @@ function AuthProvider({ children }) {
     session,
     loading,
     signOut,
-    isAuthenticated: !!session,
+    // Consider authenticated if we have session OR cached profile (will verify in background)
+    isAuthenticated: !!session || !!userProfile,
     
     // Lazada accounts
     lazadaAccounts,
@@ -561,7 +600,9 @@ function App() {
   return (
     <BrowserRouter basename="/cll">
       <AuthProvider>
-        <AppRoutes />
+        <NotificationProvider>
+          <AppRoutes />
+        </NotificationProvider>
       </AuthProvider>
     </BrowserRouter>
   );

@@ -1,27 +1,53 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { AccountManager } from '../utils/AccountManager';
+import { useAccounts } from '../utils/AccountManager';
+import { auth } from '../lib/supabase';
+import { useAuth } from '../App';
+
+// Helper function to get clean display name for account
+const getAccountDisplayName = (account) => {
+  if (!account) return 'Unknown';
+  
+  // If account_name exists and is NOT an email, use it
+  if (account.account_name && !account.account_name.includes('@')) {
+    return account.account_name;
+  }
+  
+  // Extract name from email (e.g., "arla.ops@..." -> "Arla")
+  const emailOrName = account.account_name || account.seller_id || '';
+  if (emailOrName.includes('@')) {
+    const namePart = emailOrName.split('@')[0]; // "arla.ops"
+    const firstName = namePart.split('.')[0]; // "arla"
+    return firstName.charAt(0).toUpperCase() + firstName.slice(1); // "Arla"
+  }
+  
+  // Fallback to seller_id
+  return account.seller_id || 'Account';
+};
 
 function Ffr({ apiUrl }) {
   const navigate = useNavigate();
-  const [accounts, setAccounts] = useState([]);
+  const { accounts, loading: accountsLoading } = useAccounts();
+  const { isAdmin } = useAuth();
+  
   const [performanceData, setPerformanceData] = useState([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState(null);
   const [showRawData, setShowRawData] = useState(false);
   const [rawResponses, setRawResponses] = useState({});
+  
+  // Prevent multiple fetches
+  const initialFetchDone = useRef(false);
 
+  // Fetch performance data when accounts load
   useEffect(() => {
-    const allAccounts = AccountManager.getAccounts();
+    if (accountsLoading) return;
+    if (accounts.length === 0) return;
+    if (initialFetchDone.current) return;
     
-    if (allAccounts.length === 0) {
-      navigate('/', { replace: true });
-      return;
-    }
-    
-    setAccounts(allAccounts);
-    fetchAllAccountsPerformance(allAccounts);
-  }, [navigate]);
+    initialFetchDone.current = true;
+    fetchAllAccountsPerformance(accounts);
+  }, [accounts, accountsLoading]);
 
   const fetchAllAccountsPerformance = async (accountsList) => {
     setLoading(true);
@@ -45,7 +71,7 @@ function Ffr({ apiUrl }) {
           const account = accountsList[index];
           allPerformance.push({
             account_id: account.id,
-            account_name: account.account,
+            account_name: getAccountDisplayName(account),
             account_country: account.country,
             ...result.value.parsed
           });
@@ -70,14 +96,19 @@ function Ffr({ apiUrl }) {
 
   const fetchAccountPerformance = async (account) => {
     try {
-      const response = await fetch(`${apiUrl}/lazada/seller/policy`, {
+      // Get auth token for the API call
+      const token = await auth.getAccessToken();
+      
+      // Use accountId query parameter (camelCase) - matches withLazadaToken middleware
+      const response = await fetch(`${apiUrl}/lazada/seller/policy?accountId=${account.id}`, {
         headers: {
-          'Authorization': `Bearer ${account.access_token}`,
+          'Authorization': `Bearer ${token}`,
           'Content-Type': 'application/json'
         }
       });
 
       const data = await response.json();
+      const displayName = getAccountDisplayName(account);
 
       if (response.ok && (data.code === '0' || data.code === 0)) {
         let ffrRate = 'N/A';
@@ -105,7 +136,7 @@ function Ffr({ apiUrl }) {
         return { 
           parsed: { ffr: ffrRate },
           rawResponse: {
-            account_name: account.account,
+            account_name: displayName,
             account_country: account.country,
             status: response.status,
             statusText: response.statusText,
@@ -120,7 +151,7 @@ function Ffr({ apiUrl }) {
         return { 
           parsed: { ffr: 'Error' },
           rawResponse: {
-            account_name: account.account,
+            account_name: displayName,
             account_country: account.country,
             status: response.status,
             statusText: response.statusText,
@@ -130,11 +161,11 @@ function Ffr({ apiUrl }) {
         };
       }
     } catch (err) {
-      console.error(`Error fetching policy for ${account.account}:`, err);
+      console.error(`Error fetching policy for ${getAccountDisplayName(account)}:`, err);
       return { 
         parsed: { ffr: 'Error' },
         rawResponse: {
-          account_name: account.account,
+          account_name: getAccountDisplayName(account),
           account_country: account.country,
           status: 'error',
           statusText: err.message,
@@ -148,8 +179,48 @@ function Ffr({ apiUrl }) {
   const handleRefresh = () => {
     setPerformanceData([]);
     setRawResponses({});
+    initialFetchDone.current = false;
     fetchAllAccountsPerformance(accounts);
   };
+
+  // Show loading while accounts are loading
+  if (accountsLoading) {
+    return (
+      <div className="flex items-center justify-center min-h-96">
+        <div className="text-center">
+          <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-blue-600 mx-auto mb-4"></div>
+          <p className="text-gray-600">Loading accounts...</p>
+        </div>
+      </div>
+    );
+  }
+
+  // Show message if no accounts
+  if (accounts.length === 0) {
+    return (
+      <div className="max-w-6xl mx-auto">
+        <h1 className="text-2xl font-bold text-gray-900 mb-6">Fast Fulfilment Rate (FFR)</h1>
+        <div className="bg-white rounded-lg shadow p-8 text-center">
+          <div className="w-16 h-16 bg-gray-100 rounded-full flex items-center justify-center mx-auto mb-4">
+            <svg className="w-8 h-8 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 21V5a2 2 0 00-2-2H7a2 2 0 00-2 2v16m14 0h2m-2 0h-5m-9 0H3m2 0h5M9 7h1m-1 4h1m4-4h1m-1 4h1m-5 10v-5a1 1 0 011-1h2a1 1 0 011 1v5m-4 0h4" />
+            </svg>
+          </div>
+          <p className="text-gray-600 mb-4">No Lazada accounts connected</p>
+          {isAdmin ? (
+            <button
+              onClick={() => navigate('/lazada-auth')}
+              className="text-blue-600 hover:text-blue-700 font-medium"
+            >
+              + Connect Lazada Account
+            </button>
+          ) : (
+            <p className="text-gray-500 text-sm">Contact an admin to connect accounts.</p>
+          )}
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="max-w-6xl mx-auto">
@@ -173,6 +244,22 @@ function Ffr({ apiUrl }) {
             </svg>
             Refresh
           </button>
+        </div>
+      </div>
+
+      {/* Connected Accounts */}
+      <div className="bg-gradient-to-r from-blue-50 to-indigo-50 rounded-lg p-4 mb-6 border border-blue-200">
+        <h3 className="text-sm font-semibold text-gray-700 mb-2">Connected Accounts</h3>
+        <div className="flex flex-wrap gap-2">
+          {accounts.map(account => (
+            <div key={account.id} className="flex items-center gap-2 bg-white px-3 py-1.5 rounded-lg shadow-sm">
+              <div className="w-6 h-6 rounded-full bg-blue-100 flex items-center justify-center text-blue-600 font-semibold text-xs">
+                {getAccountDisplayName(account).charAt(0).toUpperCase()}
+              </div>
+              <span className="text-sm font-medium text-gray-900">{getAccountDisplayName(account)}</span>
+              <span className="text-xs text-gray-500 uppercase">({account.country})</span>
+            </div>
+          ))}
         </div>
       </div>
 
@@ -241,22 +328,40 @@ function Ffr({ apiUrl }) {
             ) : performanceData.length === 0 ? (
               <tr>
                 <td colSpan="2" className="px-6 py-12 text-center text-gray-500">
-                  No performance data available
+                  No performance data available. Click Refresh to load data.
                 </td>
               </tr>
             ) : (
               performanceData.map((data) => (
                 <tr key={data.account_id} className="hover:bg-gray-50 transition-colors">
                   <td className="px-6 py-4">
-                    <div>
-                      <div className="font-medium text-gray-900">{data.account_name}</div>
-                      <div className="text-sm text-gray-500 uppercase">{data.account_country}</div>
+                    <div className="flex items-center gap-3">
+                      <div className="w-10 h-10 rounded-full bg-blue-100 flex items-center justify-center text-blue-600 font-semibold">
+                        {data.account_name.charAt(0).toUpperCase()}
+                      </div>
+                      <div>
+                        <div className="font-medium text-gray-900">{data.account_name}</div>
+                        <div className="text-sm text-gray-500 uppercase">{data.account_country}</div>
+                      </div>
                     </div>
                   </td>
                   <td className="px-6 py-4">
-                    <span className="text-lg font-semibold text-gray-900">
+                    <span className={`text-2xl font-bold ${
+                      data.ffr === 'N/A' || data.ffr === 'Error' 
+                        ? 'text-gray-400' 
+                        : parseFloat(data.ffr) >= 95 
+                          ? 'text-green-600' 
+                          : parseFloat(data.ffr) >= 90 
+                            ? 'text-yellow-600' 
+                            : 'text-red-600'
+                    }`}>
                       {data.ffr !== 'N/A' && data.ffr !== 'Error' ? `${data.ffr}%` : data.ffr}
                     </span>
+                    {data.ffr !== 'N/A' && data.ffr !== 'Error' && (
+                      <div className="text-xs text-gray-500 mt-1">
+                        {parseFloat(data.ffr) >= 95 ? '✓ Good' : parseFloat(data.ffr) >= 90 ? '⚠ Needs improvement' : '✗ Below target'}
+                      </div>
+                    )}
                   </td>
                 </tr>
               ))
@@ -264,6 +369,24 @@ function Ffr({ apiUrl }) {
           </tbody>
         </table>
       </div>
+
+      {/* Legend */}
+      {performanceData.length > 0 && (
+        <div className="mt-4 flex items-center gap-6 text-sm text-gray-600">
+          <div className="flex items-center gap-2">
+            <div className="w-3 h-3 rounded-full bg-green-600"></div>
+            <span>≥95% Good</span>
+          </div>
+          <div className="flex items-center gap-2">
+            <div className="w-3 h-3 rounded-full bg-yellow-600"></div>
+            <span>90-95% Needs improvement</span>
+          </div>
+          <div className="flex items-center gap-2">
+            <div className="w-3 h-3 rounded-full bg-red-600"></div>
+            <span>&lt;90% Below target</span>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

@@ -8,6 +8,27 @@ import { SyncService, CachedDataService, getFormattedLastSync } from '../utils/C
 import DataCharts from '../components/DataCharts';
 import { useAuth } from '../App';
 
+// Helper function to get clean display name for account
+const getAccountDisplayName = (account) => {
+  if (!account) return 'Unknown';
+  
+  // If account_name exists and is NOT an email, use it
+  if (account.account_name && !account.account_name.includes('@')) {
+    return account.account_name;
+  }
+  
+  // Extract name from email (e.g., "arla.ops@..." -> "Arla")
+  const emailOrName = account.account_name || account.seller_id || '';
+  if (emailOrName.includes('@')) {
+    const namePart = emailOrName.split('@')[0]; // "arla.ops"
+    const firstName = namePart.split('.')[0]; // "arla"
+    return firstName.charAt(0).toUpperCase() + firstName.slice(1); // "Arla"
+  }
+  
+  // Fallback to seller_id
+  return account.seller_id || 'Account';
+};
+
 export default function DataInsights({ apiUrl }) {
   const navigate = useNavigate();
   const { accounts, loading: accountsLoading, refresh: refreshAccounts } = useAccounts();
@@ -123,7 +144,7 @@ export default function DataInsights({ apiUrl }) {
         const formattedMetrics = result.data.map(metric => ({
           date: metric.metric_date,
           account_id: metric.account_id,
-          account_name: metric.lazada_accounts?.account_name || metric.lazada_accounts?.seller_id,
+          account_name: getAccountDisplayName(metric.lazada_accounts),
           account_country: metric.lazada_accounts?.country,
           campaignName: metric.campaign_name || 'Unknown',
           campaignId: metric.campaign_id,
@@ -524,7 +545,7 @@ export default function DataInsights({ apiUrl }) {
               <select value={selectedAccount} onChange={(e) => setSelectedAccount(e.target.value)} className="px-3 py-1.5 border border-gray-300 rounded text-sm focus:ring-2 focus:ring-blue-500 focus:border-transparent bg-white min-w-[200px]">
                 <option value="all">All Accounts</option>
                 {accounts.map((account) => (
-                  <option key={account.id} value={account.id}>{account.account_name || account.seller_id} ({account.country})</option>
+                  <option key={account.id} value={account.id}>{getAccountDisplayName(account)} ({account.country})</option>
                 ))}
               </select>
 
@@ -604,6 +625,129 @@ export default function DataInsights({ apiUrl }) {
                   <MetricBox label="Orders" value={totals.totalOrders} change={totals.avgOrdersChange} color="gray" />
                 </div>
               </div>
+
+              {/* Spend vs Revenue Chart */}
+              {metricsData.length > 0 && (
+                <div className="px-6 py-6">
+                  <div className="bg-white rounded-lg border border-gray-200 p-6 transition-all duration-300">
+                    <div className="flex items-center justify-between mb-6">
+                      <div>
+                        <h2 className="text-lg font-semibold text-gray-900">Performance Over Time</h2>
+                        <p className="text-sm text-gray-500 mt-1">
+                          {selectedAccount === 'all' 
+                            ? 'All Accounts' 
+                            : getAccountDisplayName(accounts.find(a => a.id === selectedAccount))
+                          }
+                          {selectedCampaign !== 'overview' && ` • ${campaigns.find(c => c.campaign_id === selectedCampaign)?.campaign_name || 'Selected Campaign'}`}
+                        </p>
+                      </div>
+                      <div className="flex items-center gap-4 text-sm">
+                        <div className="flex items-center gap-2">
+                          <div className="w-3 h-3 rounded-full bg-blue-500"></div>
+                          <span className="text-gray-600">Spend</span>
+                        </div>
+                        <div className="flex items-center gap-2">
+                          <div className="w-3 h-3 rounded-full bg-cyan-400"></div>
+                          <span className="text-gray-600">Guided GMV</span>
+                        </div>
+                      </div>
+                    </div>
+                    <div className="h-80 transition-opacity duration-300" key={`chart-${selectedAccount}-${selectedCampaign}`}>
+                      <ResponsiveContainer width="100%" height="100%">
+                        <LineChart
+                          data={(() => {
+                            // Aggregate data by date - filters by selected account
+                            const filteredData = selectedAccount === 'all' 
+                              ? metricsData 
+                              : metricsData.filter(m => m.account_id === selectedAccount);
+                            
+                            // Also filter by selected campaign
+                            const filtered = selectedCampaign === 'overview' 
+                              ? filteredData 
+                              : filteredData.filter(m => m.campaignId === selectedCampaign);
+                            
+                            // Group by date and sum values
+                            const groupedByDate = filtered.reduce((acc, item) => {
+                              const date = item.date;
+                              if (!acc[date]) {
+                                acc[date] = { date, spend: 0, revenue: 0 };
+                              }
+                              acc[date].spend += item.spend || 0;
+                              acc[date].revenue += item.storeRevenue || 0;
+                              return acc;
+                            }, {});
+                            
+                            // Convert to array and sort by date
+                            return Object.values(groupedByDate)
+                              .sort((a, b) => new Date(a.date) - new Date(b.date))
+                              .map(item => ({
+                                ...item,
+                                dateFormatted: new Date(item.date).toLocaleDateString('en-GB', { 
+                                  day: '2-digit', 
+                                  month: '2-digit', 
+                                  year: 'numeric' 
+                                })
+                              }));
+                          })()}
+                          margin={{ top: 5, right: 30, left: 20, bottom: 5 }}
+                        >
+                          <CartesianGrid strokeDasharray="3 3" stroke="#f0f0f0" />
+                          <XAxis 
+                            dataKey="dateFormatted" 
+                            tick={{ fontSize: 12, fill: '#6b7280' }}
+                            tickLine={{ stroke: '#e5e7eb' }}
+                            axisLine={{ stroke: '#e5e7eb' }}
+                          />
+                          <YAxis 
+                            tick={{ fontSize: 12, fill: '#6b7280' }}
+                            tickLine={{ stroke: '#e5e7eb' }}
+                            axisLine={{ stroke: '#e5e7eb' }}
+                            tickFormatter={(value) => {
+                              if (value >= 1000000) return `${(value / 1000000).toFixed(1)}M`;
+                              if (value >= 1000) return `${(value / 1000).toFixed(0)}K`;
+                              return value;
+                            }}
+                          />
+                          <Tooltip 
+                            contentStyle={{ 
+                              backgroundColor: '#fff', 
+                              border: '1px solid #e5e7eb',
+                              borderRadius: '8px',
+                              boxShadow: '0 4px 6px -1px rgba(0, 0, 0, 0.1)'
+                            }}
+                            formatter={(value, name) => [
+                              `₱${value.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`,
+                              name === 'spend' ? 'Spend' : 'Guided GMV'
+                            ]}
+                            labelStyle={{ fontWeight: 'bold', marginBottom: '4px' }}
+                          />
+                          <Line 
+                            type="monotone" 
+                            dataKey="spend" 
+                            stroke="#3B82F6" 
+                            strokeWidth={2}
+                            dot={{ fill: '#3B82F6', strokeWidth: 2, r: 4 }}
+                            activeDot={{ r: 6, stroke: '#3B82F6', strokeWidth: 2 }}
+                            animationDuration={800}
+                            animationEasing="ease-in-out"
+                          />
+                          <Line 
+                            type="monotone" 
+                            dataKey="revenue" 
+                            stroke="#22D3EE" 
+                            strokeWidth={2}
+                            dot={{ fill: '#22D3EE', strokeWidth: 2, r: 4 }}
+                            activeDot={{ r: 6, stroke: '#22D3EE', strokeWidth: 2 }}
+                            animationDuration={800}
+                            animationEasing="ease-in-out"
+                            animationBegin={200}
+                          />
+                        </LineChart>
+                      </ResponsiveContainer>
+                    </div>
+                  </div>
+                </div>
+              )}
 
               {metricsData.length > 0 && (
                 <div className="px-6 py-6">

@@ -13,7 +13,7 @@ import { useAuth } from "../App";
 export default function Sidebar() {
     const [isCollapsed, setIsCollapsed] = useState(false);
     const location = useLocation();
-    const { role, hasPageAccess, isAdmin } = useAuth();
+    const { role, hasPageAccess, isAdmin, userProfile } = useAuth();
 
     // All menu items with their required page access
     const allMenuItems = [
@@ -84,14 +84,14 @@ export default function Sidebar() {
                 <div className="p-4 border-t">
                     <div className="flex items-center gap-3">
                         <div className="w-10 h-10 rounded-full bg-blue-100 flex items-center justify-center text-blue-600 font-semibold">
-                            {localStorage.getItem('lazada_account')?.charAt(0)?.toUpperCase() || 'U'}
+                            {userProfile?.full_name?.charAt(0)?.toUpperCase() || userProfile?.email?.charAt(0)?.toUpperCase() || 'U'}
                         </div>
                         <div className="flex-1 min-w-0">
                             <p className="text-sm font-medium text-gray-900 truncate">
-                                {localStorage.getItem('lazada_account') || 'User'}
+                                {userProfile?.full_name || userProfile?.email?.split('@')[0] || 'User'}
                             </p>
-                            <p className="text-xs text-gray-500 uppercase">
-                                {localStorage.getItem('lazada_country') || 'PH'}
+                            <p className="text-xs text-gray-500 truncate">
+                                {userProfile?.email || ''}
                             </p>
                         </div>
                     </div>

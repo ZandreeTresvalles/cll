@@ -2,23 +2,42 @@ import { useState, useEffect, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
 import * as XLSX from 'xlsx';
 import { useAccounts } from '../utils/AccountManager.jsx';
-import { auth } from '../lib/supabase';
 import { SyncService, CachedDataService, getFormattedLastSync } from '../utils/CachedDataService';
 import { useAuth } from '../App';
+import { useNotifications } from '../utils/NotificationContext';
 
-function OrderItems({ apiUrl }) {
+// Helper function to get clean display name for account
+const getAccountDisplayName = (account) => {
+  if (!account) return 'Unknown';
+  
+  // If account_name exists and is NOT an email, use it
+  if (account.account_name && !account.account_name.includes('@')) {
+    return account.account_name;
+  }
+  
+  // Extract name from email (e.g., "arla.ops@..." -> "Arla")
+  const emailOrName = account.account_name || account.seller_id || '';
+  if (emailOrName.includes('@')) {
+    const namePart = emailOrName.split('@')[0]; // "arla.ops"
+    const firstName = namePart.split('.')[0]; // "arla"
+    return firstName.charAt(0).toUpperCase() + firstName.slice(1); // "Arla"
+  }
+  
+  // Fallback to seller_id
+  return account.seller_id || 'Account';
+};
+
+function OrderItems() {
   const navigate = useNavigate();
   const { accounts, activeAccount, loading: accountsLoading, refresh: refreshAccounts } = useAccounts();
   const { isAdmin } = useAuth(); // Get admin status for conditional rendering
-  
+  const { addNotification } = useNotifications();
+
   const [orders, setOrders] = useState([]);
   const [filteredOrders, setFilteredOrders] = useState([]);
   const [selectedOrders, setSelectedOrders] = useState([]);
-  const [orderItems, setOrderItems] = useState([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState(null);
-  const [openDropdown, setOpenDropdown] = useState(null);
-  const dropdownRef = useRef(null);
 
   // Sync state
   const [syncing, setSyncing] = useState(false);
@@ -51,35 +70,6 @@ function OrderItems({ apiUrl }) {
 
   // Statistics
   const [totalOrders, setTotalOrders] = useState(0);
-
-  // Helper function to make authenticated API calls
-  const authenticatedFetch = async (url, options = {}) => {
-    const token = await auth.getAccessToken();
-    
-    if (!token) {
-      throw new Error('Not authenticated');
-    }
-
-    return fetch(url, {
-      ...options,
-      headers: {
-        'Content-Type': 'application/json',
-        'Authorization': `Bearer ${token}`,
-        ...options.headers,
-      },
-    });
-  };
-
-  // Close dropdown when clicking outside
-  useEffect(() => {
-    function handleClickOutside(event) {
-      if (dropdownRef.current && !dropdownRef.current.contains(event.target)) {
-        setOpenDropdown(null);
-      }
-    }
-    document.addEventListener('mousedown', handleClickOutside);
-    return () => document.removeEventListener('mousedown', handleClickOutside);
-  }, []);
 
   // Fetch sync status on mount
   useEffect(() => {
@@ -143,7 +133,11 @@ function OrderItems({ apiUrl }) {
       
       if (result.success) {
         setLastSyncTime(getFormattedLastSync('orders'));
-        alert(`Sync completed! ${result.data.total_synced} orders synced.`);
+        addNotification({
+          type: 'sync',
+          title: 'Sync Completed',
+          message: `${result.data.total_synced} orders synced successfully.`,
+        });
         // Refresh data after sync
         fetchCachedOrders();
       } else {
@@ -151,7 +145,11 @@ function OrderItems({ apiUrl }) {
       }
     } catch (err) {
       setError('Sync failed: ' + err.message);
-      alert('Sync failed: ' + err.message);
+      addNotification({
+        type: 'error',
+        title: 'Sync Failed',
+        message: err.message,
+      });
     } finally {
       setSyncing(false);
     }
@@ -181,7 +179,7 @@ function OrderItems({ apiUrl }) {
           currency: order.currency,
           created_at: order.order_created_at,
           _account_id: order.account_id,
-          _account_name: order.lazada_accounts?.account_name || order.lazada_accounts?.seller_id,
+          _account_name: getAccountDisplayName(order.lazada_accounts),
           _account_country: order.lazada_accounts?.country,
           _synced_at: order.synced_at
         }));
@@ -234,31 +232,6 @@ function OrderItems({ apiUrl }) {
     setCurrentPage(1);
   };
 
-  const fetchOrderItems = async (orderId, accountId) => {
-    setLoading(true);
-    setError(null);
-
-    try {
-      const response = await authenticatedFetch(`${apiUrl}/lazada/order/${orderId}/items`, {
-        headers: {
-          'X-Account-Id': accountId,
-        }
-      });
-
-      const data = await response.json();
-
-      if (response.ok && (data.code === '0' || data.code === 0)) {
-        setOrderItems(data.data || []);
-      } else {
-        setError(data.details || data.message || 'Failed to fetch order items');
-      }
-    } catch (err) {
-      setError('Network error: ' + err.message);
-    } finally {
-      setLoading(false);
-    }
-  };
-
   const handleSelectOrder = (orderId) => {
     setSelectedOrders(prev =>
       prev.includes(orderId)
@@ -278,7 +251,6 @@ function OrderItems({ apiUrl }) {
   const handleRefresh = () => {
     setOrders([]);
     setSelectedOrders([]);
-    setOrderItems([]);
     fetchCachedOrders();
   };
 
@@ -293,22 +265,6 @@ function OrderItems({ apiUrl }) {
   const clearDateFilters = () => {
     setDateFrom(getYesterday());
     setDateTo(getToday());
-  };
-
-  const handleActionClick = (orderId) => {
-    setOpenDropdown(openDropdown === orderId ? null : orderId);
-  };
-
-  const handleArrangeShipment = async (order) => {
-    console.log('Arrange shipment for:', order.order_id);
-    setOpenDropdown(null);
-  };
-
-  const handleCancelOrder = async (order) => {
-    if (window.confirm('Are you sure you want to cancel this order?')) {
-      console.log('Cancel order:', order.order_id);
-      setOpenDropdown(null);
-    }
   };
 
   const exportCurrentPageToExcel = () => {
@@ -385,37 +341,6 @@ function OrderItems({ apiUrl }) {
     XLSX.writeFile(wb, filename);
   };
 
-  const exportOrderItemsToExcel = () => {
-    if (orderItems.length === 0) {
-      alert('No order items to export');
-      return;
-    }
-
-    const exportData = orderItems.map(item => ({
-      'Order Item ID': item.order_item_id,
-      'Product Name': item.name,
-      'SKU': item.sku,
-      'Variation': item.variation || 'N/A',
-      'Quantity': item.quantity || 1,
-      'Unit Price': item.paid_price,
-      'Currency': item.currency || 'PHP',
-      'Status': item.status || 'N/A',
-    }));
-
-    const wb = XLSX.utils.book_new();
-    const ws = XLSX.utils.json_to_sheet(exportData);
-
-    const colWidths = [
-      { wch: 15 }, { wch: 30 }, { wch: 15 }, { wch: 20 },
-      { wch: 10 }, { wch: 12 }, { wch: 8 }, { wch: 12 }
-    ];
-    ws['!cols'] = colWidths;
-
-    XLSX.utils.book_append_sheet(wb, ws, 'Order Items');
-    const filename = `Lazada_Order_Items_${new Date().toISOString().split('T')[0]}.xlsx`;
-    XLSX.writeFile(wb, filename);
-  };
-
   // Pagination
   const indexOfLastOrder = currentPage * itemsPerPage;
   const indexOfFirstOrder = indexOfLastOrder - itemsPerPage;
@@ -482,46 +407,6 @@ function OrderItems({ apiUrl }) {
             >
               Sync Dashboard →
             </button>
-          </div>
-        </div>
-      </div>
-
-      {/* Account Status Banner */}
-      <div className="bg-gradient-to-r from-blue-50 to-indigo-50 rounded-lg p-4 mb-6 border border-blue-200">
-        <div className="flex items-center justify-between">
-          <div>
-            <h3 className="text-lg font-semibold text-gray-900 mb-2">Connected Accounts</h3>
-            <div className="flex flex-wrap gap-3">
-              {accounts.map(account => (
-                <div key={account.id} className="flex items-center gap-2 bg-white px-3 py-2 rounded-lg shadow-sm">
-                  <div className="w-8 h-8 rounded-full bg-blue-100 flex items-center justify-center text-blue-600 font-semibold text-sm">
-                    {(account.account_name || account.seller_id)?.charAt(0)?.toUpperCase()}
-                  </div>
-                  <div>
-                    <p className="text-sm font-medium text-gray-900">{account.account_name || account.seller_id}</p>
-                    <p className="text-xs text-gray-500 uppercase">{account.country}</p>
-                  </div>
-                </div>
-              ))}
-            </div>
-            {accounts.length === 0 && (
-              isAdmin ? (
-                <button
-                  onClick={() => navigate('/lazada-auth')}
-                  className="mt-2 text-blue-600 hover:text-blue-700 text-sm font-medium"
-                >
-                  + Connect Lazada Account
-                </button>
-              ) : (
-                <p className="mt-2 text-gray-500 text-sm">
-                  No accounts connected. Contact an admin to connect accounts.
-                </p>
-              )
-            )}
-          </div>
-          <div className="text-right">
-            <p className="text-2xl font-bold text-blue-600">{orders.length}</p>
-            <p className="text-sm text-gray-600">Total Orders</p>
           </div>
         </div>
       </div>
@@ -610,7 +495,7 @@ function OrderItems({ apiUrl }) {
               <option value="all">All Accounts</option>
               {accounts.map(account => (
                 <option key={account.id} value={account.id}>
-                  {account.account_name || account.seller_id} ({account.country})
+                  {getAccountDisplayName(account)} ({account.country})
                 </option>
               ))}
             </select>
@@ -700,13 +585,13 @@ function OrderItems({ apiUrl }) {
                   Status
                 </th>
                 <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                  OMS Status
+                </th>
+                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
                   Price
                 </th>
                 <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
                   Created At
-                </th>
-                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                  Actions
                 </th>
               </tr>
             </thead>
@@ -772,6 +657,11 @@ function OrderItems({ apiUrl }) {
                         {order.statuses?.[0] || 'N/A'}
                       </span>
                     </td>
+                    <td className="px-6 py-4 whitespace-nowrap">
+                      <span className="px-2 py-1 inline-flex text-xs leading-5 font-semibold rounded-full bg-gray-100 text-gray-400">
+                        Not Connected
+                      </span>
+                    </td>
                     <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">
                       {order.price} {order.currency || 'PHP'}
                     </td>
@@ -781,89 +671,6 @@ function OrderItems({ apiUrl }) {
                       <span className="text-xs">
                         {new Date(order.created_at).toLocaleTimeString()}
                       </span>
-                    </td>
-                    <td className="px-6 py-4 whitespace-nowrap text-sm relative">
-                      <button
-                        onClick={() => fetchOrderItems(order.order_id, order._account_id)}
-                        className="text-blue-600 hover:text-blue-900 font-medium mr-2"
-                      >
-                        View Items
-                      </button>
-
-                      <button
-                        onClick={() => handleActionClick(order.order_id)}
-                        className="inline-flex items-center px-3 py-1.5 border border-gray-300 shadow-sm text-sm font-medium rounded-md text-gray-700 bg-white hover:bg-gray-50"
-                      >
-                        More Actions
-                        <svg className="ml-2 h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
-                        </svg>
-                      </button>
-
-                      {openDropdown === order.order_id && (
-                        <div 
-                          ref={dropdownRef}
-                          className="absolute right-0 mt-2 w-56 rounded-md shadow-lg bg-white ring-1 ring-black ring-opacity-5 z-10"
-                        >
-                          <div className="py-1">
-                            <button
-                              onClick={() => handleArrangeShipment(order)}
-                              className="block w-full text-left px-4 py-2 text-sm text-gray-700 hover:bg-gray-100"
-                            >
-                              Arrange Shipment
-                            </button>
-                            <button
-                              onClick={() => console.log('Recreate Package')}
-                              className="block w-full text-left px-4 py-2 text-sm text-gray-700 hover:bg-gray-100"
-                            >
-                              Recreate Package
-                            </button>
-                            <button
-                              onClick={() => console.log('Request Extension')}
-                              className="block w-full text-left px-4 py-2 text-sm text-gray-700 hover:bg-gray-100"
-                            >
-                              Request Extension
-                            </button>
-                            <button
-                              onClick={() => console.log('Logistics Status')}
-                              className="block w-full text-left px-4 py-2 text-sm text-gray-700 hover:bg-gray-100"
-                            >
-                              Logistics Status
-                            </button>
-                            <button
-                              onClick={() => console.log('Print AWB')}
-                              className="block w-full text-left px-4 py-2 text-sm text-gray-700 hover:bg-gray-100"
-                            >
-                              Print AWB
-                            </button>
-                            <button
-                              onClick={() => console.log('Print Packing List')}
-                              className="block w-full text-left px-4 py-2 text-sm text-gray-700 hover:bg-gray-100"
-                            >
-                              Print Packing List
-                            </button>
-                            <button
-                              onClick={() => console.log('Print Pick List')}
-                              className="block w-full text-left px-4 py-2 text-sm text-gray-700 hover:bg-gray-100"
-                            >
-                              Print Pick List
-                            </button>
-                            <button
-                              onClick={() => console.log('Seller Note')}
-                              className="block w-full text-left px-4 py-2 text-sm text-gray-700 hover:bg-gray-100"
-                            >
-                              Seller Note
-                            </button>
-                            <div className="border-t border-gray-100"></div>
-                            <button
-                              onClick={() => handleCancelOrder(order)}
-                              className="block w-full text-left px-4 py-2 text-sm text-red-600 hover:bg-gray-100"
-                            >
-                              Cancel Order
-                            </button>
-                          </div>
-                        </div>
-                      )}
                     </td>
                   </tr>
                 ))
@@ -924,72 +731,6 @@ function OrderItems({ apiUrl }) {
         )}
       </div>
 
-      {/* Order Items Table */}
-      {orderItems.length > 0 && (
-        <div className="bg-white rounded-lg shadow-md overflow-hidden">
-          <div className="px-6 py-4 border-b border-gray-200 flex justify-between items-center">
-            <h2 className="text-lg font-semibold">Order Items ({orderItems.length})</h2>
-            <button
-              onClick={exportOrderItemsToExcel}
-              className="bg-blue-600 text-white px-4 py-2 rounded-lg hover:bg-blue-700 transition flex items-center gap-2 text-sm"
-            >
-              <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 10v6m0 0l-3-3m3 3l3-3m2 8H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
-              </svg>
-              Export Items
-            </button>
-          </div>
-          <div className="overflow-x-auto">
-            <table className="min-w-full divide-y divide-gray-200">
-              <thead className="bg-gray-50">
-                <tr>
-                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                    Product
-                  </th>
-                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                    SKU
-                  </th>
-                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                    Quantity
-                  </th>
-                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                    Price
-                  </th>
-                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                    Status
-                  </th>
-                </tr>
-              </thead>
-              <tbody className="bg-white divide-y divide-gray-200">
-                {orderItems.map((item, index) => (
-                  <tr key={index} className="hover:bg-gray-50">
-                    <td className="px-6 py-4">
-                      <div className="text-sm font-medium text-gray-900">{item.name}</div>
-                      {item.variation && (
-                        <div className="text-xs text-gray-500">{item.variation}</div>
-                      )}
-                    </td>
-                    <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
-                      {item.sku}
-                    </td>
-                    <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">
-                      {item.quantity || 1}
-                    </td>
-                    <td className="px-6 py-4 whitespace-nowrap text-sm font-medium text-gray-900">
-                      {item.paid_price} {item.currency || 'PHP'}
-                    </td>
-                    <td className="px-6 py-4 whitespace-nowrap">
-                      <span className="px-2 py-1 inline-flex text-xs leading-5 font-semibold rounded-full bg-blue-100 text-blue-800">
-                        {item.status || 'N/A'}
-                      </span> 
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        </div>
-      )}
     </div>
   );
 }
