@@ -1,0 +1,172 @@
+-- WARNING: This schema is for context only and is not meant to be run.
+-- Table order and constraints may not be valid for execution.
+
+CREATE TABLE public.cached_campaign_metrics (
+  id uuid NOT NULL DEFAULT gen_random_uuid(),
+  user_id uuid,
+  account_id uuid NOT NULL,
+  campaign_id text NOT NULL,
+  campaign_name text,
+  metric_date date NOT NULL,
+  spend numeric DEFAULT 0,
+  day_budget numeric DEFAULT 0,
+  store_revenue numeric DEFAULT 0,
+  product_revenue numeric DEFAULT 0,
+  store_orders integer DEFAULT 0,
+  product_orders integer DEFAULT 0,
+  store_unit_sold integer DEFAULT 0,
+  product_unit_sold integer DEFAULT 0,
+  impressions integer DEFAULT 0,
+  clicks integer DEFAULT 0,
+  ctr numeric DEFAULT 0,
+  cpc numeric DEFAULT 0,
+  store_roi numeric DEFAULT 0,
+  store_cvr numeric DEFAULT 0,
+  product_cvr numeric DEFAULT 0,
+  store_a2c integer DEFAULT 0,
+  product_a2c integer DEFAULT 0,
+  raw_data jsonb,
+  synced_at timestamp with time zone DEFAULT now(),
+  CONSTRAINT cached_campaign_metrics_pkey PRIMARY KEY (id),
+  CONSTRAINT cached_campaign_metrics_user_id_fkey FOREIGN KEY (user_id) REFERENCES auth.users(id),
+  CONSTRAINT cached_campaign_metrics_account_id_fkey FOREIGN KEY (account_id) REFERENCES public.lazada_accounts(id)
+);
+CREATE TABLE public.cached_campaigns (
+  id uuid NOT NULL DEFAULT gen_random_uuid(),
+  user_id uuid,
+  account_id uuid NOT NULL,
+  campaign_id text NOT NULL,
+  campaign_name text,
+  campaign_type text,
+  campaign_objective text,
+  status text,
+  day_budget numeric,
+  raw_data jsonb,
+  synced_at timestamp with time zone DEFAULT now(),
+  CONSTRAINT cached_campaigns_pkey PRIMARY KEY (id),
+  CONSTRAINT cached_campaigns_user_id_fkey FOREIGN KEY (user_id) REFERENCES auth.users(id),
+  CONSTRAINT cached_campaigns_account_id_fkey FOREIGN KEY (account_id) REFERENCES public.lazada_accounts(id)
+);
+CREATE TABLE public.cached_order_items (
+  id uuid NOT NULL DEFAULT gen_random_uuid(),
+  user_id uuid NOT NULL,
+  account_id uuid NOT NULL,
+  order_id text NOT NULL,
+  order_item_id text NOT NULL,
+  name text,
+  sku text,
+  variation text,
+  quantity integer DEFAULT 1,
+  paid_price numeric,
+  currency text DEFAULT 'PHP'::text,
+  status text,
+  raw_data jsonb,
+  synced_at timestamp with time zone DEFAULT now(),
+  CONSTRAINT cached_order_items_pkey PRIMARY KEY (id),
+  CONSTRAINT cached_order_items_user_id_fkey FOREIGN KEY (user_id) REFERENCES auth.users(id),
+  CONSTRAINT cached_order_items_account_id_fkey FOREIGN KEY (account_id) REFERENCES public.lazada_accounts(id)
+);
+CREATE TABLE public.cached_orders (
+  id uuid NOT NULL DEFAULT gen_random_uuid(),
+  user_id uuid,
+  account_id uuid NOT NULL,
+  order_id text NOT NULL,
+  order_number text,
+  status text,
+  price numeric,
+  currency text DEFAULT 'PHP'::text,
+  items_count integer DEFAULT 0,
+  order_created_at timestamp with time zone,
+  order_updated_at timestamp with time zone,
+  raw_data jsonb,
+  synced_at timestamp with time zone DEFAULT now(),
+  CONSTRAINT cached_orders_pkey PRIMARY KEY (id),
+  CONSTRAINT cached_orders_user_id_fkey FOREIGN KEY (user_id) REFERENCES auth.users(id),
+  CONSTRAINT cached_orders_account_id_fkey FOREIGN KEY (account_id) REFERENCES public.lazada_accounts(id)
+);
+CREATE TABLE public.charts (
+  id uuid NOT NULL DEFAULT gen_random_uuid(),
+  title text NOT NULL,
+  chart_type text NOT NULL DEFAULT 'bar'::text,
+  data jsonb NOT NULL,
+  config jsonb,
+  file_name text,
+  created_at timestamp with time zone DEFAULT now(),
+  updated_at timestamp with time zone DEFAULT now(),
+  CONSTRAINT charts_pkey PRIMARY KEY (id)
+);
+CREATE TABLE public.lazada_accounts (
+  id uuid NOT NULL DEFAULT gen_random_uuid(),
+  user_id uuid NOT NULL,
+  seller_id text NOT NULL,
+  account_name text,
+  country text,
+  access_token text NOT NULL,
+  refresh_token text NOT NULL,
+  expires_in integer,
+  token_expires_at timestamp with time zone,
+  country_user_info jsonb,
+  account_platform text,
+  is_active boolean DEFAULT true,
+  created_at timestamp with time zone DEFAULT now(),
+  updated_at timestamp with time zone DEFAULT now(),
+  CONSTRAINT lazada_accounts_pkey PRIMARY KEY (id),
+  CONSTRAINT lazada_accounts_user_id_fkey FOREIGN KEY (user_id) REFERENCES auth.users(id)
+);
+CREATE TABLE public.sync_logs (
+  id uuid NOT NULL DEFAULT gen_random_uuid(),
+  user_id uuid NOT NULL,
+  account_id uuid,
+  sync_type text NOT NULL,
+  status text NOT NULL,
+  started_at timestamp with time zone DEFAULT now(),
+  completed_at timestamp with time zone,
+  records_synced integer DEFAULT 0,
+  error_message text,
+  params jsonb,
+  CONSTRAINT sync_logs_pkey PRIMARY KEY (id),
+  CONSTRAINT sync_logs_user_id_fkey FOREIGN KEY (user_id) REFERENCES auth.users(id),
+  CONSTRAINT sync_logs_account_id_fkey FOREIGN KEY (account_id) REFERENCES public.lazada_accounts(id)
+);
+CREATE TABLE public.sync_settings (
+  id uuid NOT NULL DEFAULT gen_random_uuid(),
+  user_id uuid NOT NULL UNIQUE,
+  auto_sync_enabled boolean DEFAULT true,
+  sync_time time without time zone DEFAULT '00:00:00'::time without time zone,
+  timezone text DEFAULT 'Asia/Manila'::text,
+  sync_orders boolean DEFAULT true,
+  sync_campaigns boolean DEFAULT true,
+  sync_campaign_metrics boolean DEFAULT true,
+  orders_days_back integer DEFAULT 30,
+  metrics_days_back integer DEFAULT 7,
+  last_sync_at timestamp with time zone,
+  last_sync_status text,
+  created_at timestamp with time zone DEFAULT now(),
+  updated_at timestamp with time zone DEFAULT now(),
+  CONSTRAINT sync_settings_pkey PRIMARY KEY (id),
+  CONSTRAINT sync_settings_user_id_fkey FOREIGN KEY (user_id) REFERENCES auth.users(id)
+);
+CREATE TABLE public.user_preferences (
+  id uuid NOT NULL DEFAULT gen_random_uuid(),
+  user_id uuid NOT NULL UNIQUE,
+  active_account_id uuid,
+  theme text DEFAULT 'light'::text,
+  created_at timestamp with time zone DEFAULT now(),
+  updated_at timestamp with time zone DEFAULT now(),
+  CONSTRAINT user_preferences_pkey PRIMARY KEY (id),
+  CONSTRAINT user_preferences_user_id_fkey FOREIGN KEY (user_id) REFERENCES auth.users(id),
+  CONSTRAINT user_preferences_active_account_id_fkey FOREIGN KEY (active_account_id) REFERENCES public.lazada_accounts(id)
+);
+CREATE TABLE public.user_profiles (
+  id uuid NOT NULL,
+  email text NOT NULL UNIQUE,
+  full_name text,
+  role USER-DEFINED NOT NULL DEFAULT 'warehouse'::user_role,
+  is_active boolean DEFAULT true,
+  created_by uuid,
+  created_at timestamp with time zone DEFAULT now(),
+  updated_at timestamp with time zone DEFAULT now(),
+  CONSTRAINT user_profiles_pkey PRIMARY KEY (id),
+  CONSTRAINT user_profiles_id_fkey FOREIGN KEY (id) REFERENCES auth.users(id),
+  CONSTRAINT user_profiles_created_by_fkey FOREIGN KEY (created_by) REFERENCES auth.users(id)
+);
