@@ -247,22 +247,6 @@ function Ffr({ apiUrl }) {
         </div>
       </div>
 
-      {/* Connected Accounts */}
-      <div className="bg-gradient-to-r from-blue-50 to-indigo-50 rounded-lg p-4 mb-6 border border-blue-200">
-        <h3 className="text-sm font-semibold text-gray-700 mb-2">Connected Accounts</h3>
-        <div className="flex flex-wrap gap-2">
-          {accounts.map(account => (
-            <div key={account.id} className="flex items-center gap-2 bg-white px-3 py-1.5 rounded-lg shadow-sm">
-              <div className="w-6 h-6 rounded-full bg-blue-100 flex items-center justify-center text-blue-600 font-semibold text-xs">
-                {getAccountDisplayName(account).charAt(0).toUpperCase()}
-              </div>
-              <span className="text-sm font-medium text-gray-900">{getAccountDisplayName(account)}</span>
-              <span className="text-xs text-gray-500 uppercase">({account.country})</span>
-            </div>
-          ))}
-        </div>
-      </div>
-
       {error && (
         <div className="bg-red-100 border border-red-400 text-red-700 px-4 py-3 rounded mb-4">
           <strong>Error:</strong> {error}
