@@ -3,6 +3,10 @@
 
 import { createClient } from '@supabase/supabase-js';
 
+// App base path from Vite ('/' on Render/Vercel, '/cll/' on GitHub Pages).
+// Trailing slash trimmed so `${origin}${BASE_PATH}/route` has no double slash.
+const BASE_PATH = import.meta.env.BASE_URL.replace(/\/$/, '');
+
 // Get environment variables (Vite uses import.meta.env)
 const supabaseUrl = import.meta.env.VITE_SUPABASE_URL;
 const supabaseAnonKey = import.meta.env.VITE_SUPABASE_ANON_KEY;
@@ -75,7 +79,7 @@ export const auth = {
     const { data, error } = await supabase.auth.signInWithOtp({
       email,
       options: {
-        emailRedirectTo: `${window.location.origin}/cll/dashboard`,
+        emailRedirectTo: `${window.location.origin}${BASE_PATH}/dashboard`,
       },
     });
     return { data, error };
@@ -113,7 +117,7 @@ export const auth = {
   // Reset password
   async resetPassword(email) {
     const { data, error } = await supabase.auth.resetPasswordForEmail(email, {
-      redirectTo: `${window.location.origin}/cll/reset-password`,
+      redirectTo: `${window.location.origin}${BASE_PATH}/reset-password`,
     });
     return { data, error };
   },

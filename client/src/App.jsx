@@ -597,8 +597,11 @@ function AppRoutes() {
 // ============================================
 
 function App() {
+  // Vite sets BASE_URL from vite.config `base` ('/' on Render/Vercel, '/cll/' on GH Pages).
+  // React Router wants no trailing slash; '/' becomes '' (root).
+  const routerBase = import.meta.env.BASE_URL.replace(/\/$/, '');
   return (
-    <BrowserRouter basename="/cll">
+    <BrowserRouter basename={routerBase}>
       <AuthProvider>
         <NotificationProvider>
           <AppRoutes />

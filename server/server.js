@@ -31,8 +31,9 @@ const allowedOrigins = [
   'http://localhost:5173',
   'http://localhost:3000',
   'https://cloudecomm-web.github.io',
+  'https://cll-frontend.onrender.com',
 ];
-// Allow any Render-hosted frontend (e.g. cll-frontend.onrender.com)
+// Allow an additional frontend origin via env (e.g. a custom domain)
 if (process.env.FRONTEND_URL) {
   allowedOrigins.push(process.env.FRONTEND_URL);
 }

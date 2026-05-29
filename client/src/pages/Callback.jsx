@@ -103,7 +103,8 @@ function Callback({ apiUrl }) {
         setTimeout(() => {
           if (window.location.pathname.includes('callback')) {
             console.log('Fallback redirect...');
-            window.location.href = '/cll/orders';
+            // BASE_URL is '/' on Render/Vercel, '/cll/' on GH Pages
+            window.location.href = `${import.meta.env.BASE_URL}orders`;
           }
         }, 3000);
         
