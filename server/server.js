@@ -27,12 +27,23 @@ const lazadaAuth = new LazadaAuth(
 );
 
 // CORS configuration
+const allowedOrigins = [
+  'http://localhost:5173',
+  'http://localhost:3000',
+  'https://cloudecomm-web.github.io',
+];
+// Allow any Render-hosted frontend (e.g. cll-frontend.onrender.com)
+if (process.env.FRONTEND_URL) {
+  allowedOrigins.push(process.env.FRONTEND_URL);
+}
+
 const corsOptions = {
-  origin: [
-    'http://localhost:5173', 
-    'http://localhost:3000',
-    'https://cloudecomm-web.github.io'
-  ],
+  origin: (origin, callback) => {
+    // Allow requests with no origin (curl, Postman, server-to-server)
+    if (!origin) return callback(null, true);
+    if (allowedOrigins.includes(origin)) return callback(null, true);
+    callback(new Error(`CORS: origin '${origin}' not allowed`));
+  },
   credentials: true,
   methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
   allowedHeaders: ['Content-Type', 'Authorization', 'X-Account-Id', 'X-Lazada-Token']
@@ -95,6 +106,20 @@ const verifyLazadaToken = (req, res, next) => {
 // ============================================
 // BASIC ENDPOINTS
 // ============================================
+
+app.get('/', (req, res) => {
+    res.json({
+        service: 'CLL Lazada E-Commerce API',
+        status: 'running',
+        environment: process.env.NODE_ENV || 'development',
+        timestamp: new Date().toISOString(),
+        endpoints: {
+            health: '/health',
+            test: '/api/test',
+            authUrl: '/api/lazada/auth-url'
+        }
+    });
+});
 
 app.get('/health', (req, res) => {
     res.json({
@@ -943,7 +968,7 @@ app.listen(PORT, () => {
     console.log(`🔑 Lazada App Key: ${process.env.LAZADA_APP_KEY ? '✓ Set' : '✗ Missing'}`);
     console.log(`🔐 Lazada App Secret: ${process.env.LAZADA_APP_SECRET ? '✓ Set' : '✗ Missing'}`);
     console.log(`🌐 Lazada API URL: ${process.env.LAZADA_API_URL || 'Not set'}`);
-    console.log(`📦 Supabase URL: ${process.env.VITE_SUPABASE_URL ? '✓ Set' : '✗ Missing'}`);
+    console.log(`📦 Supabase URL: ${process.env.SUPABASE_URL ? '✓ Set' : '✗ Missing'}`);
     console.log(`🔐 Supabase Key: ${process.env.SUPABASE_SERVICE_ROLE_KEY ? '✓ Set' : '✗ Missing'}`);
     console.log('='.repeat(60));
     console.log('\n📋 Available endpoints:');
